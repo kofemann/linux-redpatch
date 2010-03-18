@@ -3886,14 +3886,18 @@ static int kvm_read_guest_virt_system(gva_t addr, void *val, unsigned int bytes,
 	return kvm_read_guest_virt_helper(addr, val, bytes, vcpu, 0, error);
 }
 
-static int kvm_write_guest_virt(gva_t addr, void *val, unsigned int bytes,
-				struct kvm_vcpu *vcpu, u32 *error)
+static int kvm_write_guest_virt_helper(gva_t addr, void *val,
+				       unsigned int bytes,
+				       struct kvm_vcpu *vcpu, u32 access,
+				       u32 *error)
 {
 	void *data = val;
 	int r = X86EMUL_CONTINUE;
 
+	access |= PFERR_WRITE_MASK;
+
 	while (bytes) {
-		gpa_t gpa = kvm_mmu_gva_to_gpa_write(vcpu, addr, error);
+		gpa_t gpa = vcpu->arch.mmu.gva_to_gpa(vcpu, addr, access, error);
 		unsigned offset = addr & (PAGE_SIZE-1);
 		unsigned towrite = min(bytes, (unsigned)PAGE_SIZE - offset);
 		int ret;
@@ -3916,6 +3920,19 @@ out:
 	return r;
 }
 
+static int kvm_write_guest_virt(gva_t addr, void *val, unsigned int bytes,
+				struct kvm_vcpu *vcpu, u32 *error)
+{
+	u32 access = (kvm_x86_ops->get_cpl(vcpu) == 3) ? PFERR_USER_MASK : 0;
+	return kvm_write_guest_virt_helper(addr, val, bytes, vcpu, access, error);
+}
+
+static int kvm_write_guest_virt_system(gva_t addr, void *val,
+				       unsigned int bytes,
+				       struct kvm_vcpu *vcpu, u32 *error)
+{
+	return kvm_write_guest_virt_helper(addr, val, bytes, vcpu, 0, error);
+}
 
 static int emulator_read_emulated(unsigned long addr,
 				  void *val,
@@ -5682,28 +5699,21 @@ static int save_guest_segment_descriptor(struct kvm_vcpu *vcpu, u16 selector,
 {
 	struct descriptor_table dtable;
 	u16 index = selector >> 3;
+	int ret;
+	u32 err;
+	gva_t addr;
 
 	get_segment_descriptor_dtable(vcpu, selector, &dtable);
 
 	if (dtable.limit < index * 8 + 7)
 		return 1;
-	return kvm_write_guest_virt(dtable.base + index*8, seg_desc, sizeof(*seg_desc), vcpu, NULL);
-}
+	addr = dtable.base + index*8;
+	ret =  kvm_write_guest_virt_system(addr, seg_desc,
+					   sizeof(*seg_desc), vcpu, &err);
+	if (ret == X86EMUL_PROPAGATE_FAULT)
+		kvm_inject_page_fault(vcpu, addr, err);
 
-static gpa_t get_tss_base_addr_write(struct kvm_vcpu *vcpu,
-			       struct desc_struct *seg_desc)
-{
-	u32 base_addr = get_desc_base(seg_desc);
-
-	return kvm_mmu_gva_to_gpa_write(vcpu, base_addr, NULL);
-}
-
-static gpa_t get_tss_base_addr_read(struct kvm_vcpu *vcpu,
-			     struct desc_struct *seg_desc)
-{
-	u32 base_addr = get_desc_base(seg_desc);
-
-	return kvm_mmu_gva_to_gpa_read(vcpu, base_addr, NULL);
+	return ret;
 }
 
 static u16 get_segment_selector(struct kvm_vcpu *vcpu, int seg)
