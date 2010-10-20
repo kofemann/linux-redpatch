@@ -496,7 +496,7 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 	switch (event) {
 	case NETDEV_CHANGE:
 		/* Propagate real device state to vlan devices */
-		for (i = 0; i < VLAN_GROUP_ARRAY_LEN; i++) {
+		for (i = 0; i < VLAN_N_VID; i++) {
 			if (ignore_slave_event(dev, i))
 				continue;
 			vlandev = vlan_group_get_device(grp, i);
@@ -509,7 +509,7 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 
 	case NETDEV_CHANGEADDR:
 		/* Adjust unicast filters on underlying device */
-		for (i = 0; i < VLAN_GROUP_ARRAY_LEN; i++) {
+		for (i = 0; i < VLAN_N_VID; i++) {
 			if (ignore_slave_event(dev, i))
 				continue;
 			vlandev = vlan_group_get_device(grp, i);
@@ -525,7 +525,7 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 		break;
 
 	case NETDEV_CHANGEMTU:
-		for (i = 0; i < VLAN_GROUP_ARRAY_LEN; i++) {
+		for (i = 0; i < VLAN_N_VID; i++) {
 			if (ignore_slave_event(dev, i))
 				continue;
 			vlandev = vlan_group_get_device(grp, i);
@@ -541,7 +541,7 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 
 	case NETDEV_FEAT_CHANGE:
 		/* Propagate device features to underlying device */
-		for (i = 0; i < VLAN_GROUP_ARRAY_LEN; i++) {
+		for (i = 0; i < VLAN_N_VID; i++) {
 			if (ignore_slave_event(dev, i))
 				continue;
 			vlandev = vlan_group_get_device(grp, i);
@@ -555,7 +555,7 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 
 	case NETDEV_DOWN:
 		/* Put all VLANs for this dev in the down state too.  */
-		for (i = 0; i < VLAN_GROUP_ARRAY_LEN; i++) {
+		for (i = 0; i < VLAN_N_VID; i++) {
 			if (ignore_slave_event(dev, i))
 				continue;
 			vlandev = vlan_group_get_device(grp, i);
@@ -573,7 +573,7 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 
 	case NETDEV_UP:
 		/* Put all VLANs for this dev in the up state too.  */
-		for (i = 0; i < VLAN_GROUP_ARRAY_LEN; i++) {
+		for (i = 0; i < VLAN_N_VID; i++) {
 			if (ignore_slave_event(dev, i))
 				continue;
 			vlandev = vlan_group_get_device(grp, i);
@@ -595,7 +595,7 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 			break;
 
 		/* Delete all VLANs for this dev. */
-		for (i = 0; i < VLAN_GROUP_ARRAY_LEN; i++) {
+		for (i = 0; i < VLAN_N_VID; i++) {
 			if (ignore_slave_event(dev, i))
 				continue;
 			vlandev = vlan_group_get_device(grp, i);
@@ -605,7 +605,7 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 			/* unregistration of last vlan destroys group, abort
 			 * afterwards */
 			if (grp->nr_vlans == 1)
-				i = VLAN_GROUP_ARRAY_LEN;
+				i = VLAN_N_VID;
 
 			unregister_vlan_dev(vlandev);
 		}
