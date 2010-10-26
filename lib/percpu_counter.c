@@ -77,6 +77,7 @@ int __percpu_counter_init(struct percpu_counter *fbc, s64 amount,
 		return -ENOMEM;
 #ifdef CONFIG_HOTPLUG_CPU
 	spin_lock(&percpu_counters_lock);
+	INIT_LIST_HEAD(&fbc->list);
 	list_add(&fbc->list, &percpu_counters);
 	spin_unlock(&percpu_counters_lock);
 #endif
