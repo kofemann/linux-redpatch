@@ -5,7 +5,7 @@
 #include <net/xfrm.h>
 
 /* This is the maximum truncated ICV length that we know of. */
-#define MAX_AH_AUTH_LEN	16
+#define MAX_AH_AUTH_LEN	64
 
 struct ah_data
 {
