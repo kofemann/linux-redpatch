@@ -597,7 +597,7 @@ static void write_endio(struct bio *bio, int error)
 	struct dm_buffer *b = container_of(bio, struct dm_buffer, bio);
 
 	b->write_error = error;
-	if (error) {
+	if (unlikely(error)) {
 		struct dm_bufio_client *c = b->c;
 		(void)cmpxchg(&c->async_write_error, 0, error);
 	}
@@ -733,13 +733,20 @@ static void __wait_for_free_buffer(struct dm_bufio_client *c)
 	dm_bufio_lock(c);
 }
 
+enum new_flag {
+	NF_FRESH = 0,
+	NF_READ = 1,
+	NF_GET = 2,
+	NF_PREFETCH = 3
+};
+
 /*
  * Allocate a new buffer. If the allocation is not possible, wait until
  * some other thread frees a buffer.
  *
  * May drop the lock and regain it.
  */
-static struct dm_buffer *__alloc_buffer_wait_no_callback(struct dm_bufio_client *c)
+static struct dm_buffer *__alloc_buffer_wait_no_callback(struct dm_bufio_client *c, enum new_flag nf)
 {
 	struct dm_buffer *b;
 
@@ -762,6 +769,9 @@ static struct dm_buffer *__alloc_buffer_wait_no_callback(struct dm_bufio_client 
 				return b;
 		}
 
+		if (nf == NF_PREFETCH)
+			return NULL;
+
 		if (!list_empty(&c->reserved_buffers)) {
 			b = list_entry(c->reserved_buffers.next,
 				       struct dm_buffer, lru_list);
@@ -779,9 +789,12 @@ static struct dm_buffer *__alloc_buffer_wait_no_callback(struct dm_bufio_client 
 	}
 }
 
-static struct dm_buffer *__alloc_buffer_wait(struct dm_bufio_client *c)
+static struct dm_buffer *__alloc_buffer_wait(struct dm_bufio_client *c, enum new_flag nf)
 {
-	struct dm_buffer *b = __alloc_buffer_wait_no_callback(c);
+	struct dm_buffer *b = __alloc_buffer_wait_no_callback(c, nf);
+
+	if (!b)
+		return NULL;
 
 	if (c->alloc_callback)
 		c->alloc_callback(b);
@@ -903,12 +916,6 @@ static struct dm_buffer *__find(struct dm_bufio_client *c, sector_t block)
  * Getting a buffer
  *--------------------------------------------------------------*/
 
-enum new_flag {
-	NF_FRESH = 0,
-	NF_READ = 1,
-	NF_GET = 2
-};
-
 static struct dm_buffer *__bufio_new(struct dm_bufio_client *c, sector_t block,
 				     enum new_flag nf, int *need_submit,
 				     struct list_head *write_list)
@@ -918,17 +925,15 @@ static struct dm_buffer *__bufio_new(struct dm_bufio_client *c, sector_t block,
 	*need_submit = 0;
 
 	b = __find(c, block);
-	if (b) {
-		b->hold_count++;
-		__relink_lru(b, test_bit(B_DIRTY, &b->state) ||
-			     test_bit(B_WRITING, &b->state));
-		return b;
-	}
+	if (b)
+		goto found_buffer;
 
 	if (nf == NF_GET)
 		return NULL;
 
-	new_b = __alloc_buffer_wait(c);
+	new_b = __alloc_buffer_wait(c, nf);
+	if (!new_b)
+		return NULL;
 
 	/*
 	 * We've had a period where the mutex was unlocked, so need to
@@ -937,10 +942,7 @@ static struct dm_buffer *__bufio_new(struct dm_bufio_client *c, sector_t block,
 	b = __find(c, block);
 	if (b) {
 		__free_buffer_wake(new_b);
-		b->hold_count++;
-		__relink_lru(b, test_bit(B_DIRTY, &b->state) ||
-			     test_bit(B_WRITING, &b->state));
-		return b;
+		goto found_buffer;
 	}
 
 	__check_watermark(c, write_list);
@@ -959,6 +961,24 @@ static struct dm_buffer *__bufio_new(struct dm_bufio_client *c, sector_t block,
 	b->state = 1 << B_READING;
 	*need_submit = 1;
 
+	return b;
+
+found_buffer:
+	if (nf == NF_PREFETCH)
+		return NULL;
+	/*
+	 * Note: it is essential that we don't wait for the buffer to be
+	 * read if dm_bufio_get function is used. Both dm_bufio_get and
+	 * dm_bufio_prefetch can be used in the driver request routine.
+	 * If the user called both dm_bufio_prefetch and dm_bufio_get on
+	 * the same buffer, it would deadlock if we waited.
+	 */
+	if (nf == NF_GET && unlikely(test_bit(B_READING, &b->state)))
+		return NULL;
+
+	b->hold_count++;
+	__relink_lru(b, test_bit(B_DIRTY, &b->state) ||
+		     test_bit(B_WRITING, &b->state));
 	return b;
 }
 
@@ -1000,7 +1020,8 @@ static void *new_read(struct dm_bufio_client *c, sector_t block,
 	dm_bufio_unlock(c);
 
 	__flush_write_list(&write_list, c);
-	if (!b || IS_ERR(b))
+
+	if (!b)
 		return b;
 
 	if (need_submit)
@@ -1046,13 +1067,54 @@ void *dm_bufio_new(struct dm_bufio_client *c, sector_t block,
 }
 EXPORT_SYMBOL_GPL(dm_bufio_new);
 
+void dm_bufio_prefetch(struct dm_bufio_client *c,
+		       sector_t block, unsigned n_blocks)
+{
+	LIST_HEAD(write_list);
+
+	BUG_ON(dm_bufio_in_request());
+
+	dm_bufio_lock(c);
+
+	for (; n_blocks--; block++) {
+		int need_submit;
+		struct dm_buffer *b;
+		b = __bufio_new(c, block, NF_PREFETCH, &need_submit,
+				&write_list);
+		if (unlikely(!list_empty(&write_list))) {
+			dm_bufio_unlock(c);
+			blk_unplug(bdev_get_queue(c->bdev));
+			__flush_write_list(&write_list, c);
+			dm_bufio_lock(c);
+		}
+		if (unlikely(b != NULL)) {
+			dm_bufio_unlock(c);
+
+			if (need_submit)
+				submit_io(b, READ, b->block, read_endio);
+			dm_bufio_release(b);
+
+			dm_bufio_cond_resched();
+
+			if (!n_blocks)
+				goto flush_plug;
+			dm_bufio_lock(c);
+		}
+	}
+
+	dm_bufio_unlock(c);
+
+flush_plug:
+	blk_unplug(bdev_get_queue(c->bdev));
+}
+EXPORT_SYMBOL_GPL(dm_bufio_prefetch);
+
 void dm_bufio_release(struct dm_buffer *b)
 {
 	struct dm_bufio_client *c = b->c;
 
 	dm_bufio_lock(c);
 
-	BUG_ON(test_bit(B_READING, &b->state));
 	BUG_ON(!b->hold_count);
 
 	b->hold_count--;
@@ -1065,6 +1127,7 @@ void dm_bufio_release(struct dm_buffer *b)
 		 * invalid buffer.
 		 */
 		if ((b->read_error || b->write_error) &&
+		    !test_bit(B_READING, &b->state) &&
 		    !test_bit(B_WRITING, &b->state) &&
 		    !test_bit(B_DIRTY, &b->state)) {
 			__unlink_buffer(b);
@@ -1081,6 +1144,8 @@ void dm_bufio_mark_buffer_dirty(struct dm_buffer *b)
 	struct dm_bufio_client *c = b->c;
 
 	dm_bufio_lock(c);
+
+	BUG_ON(test_bit(B_READING, &b->state));
 
 	if (!test_and_set_bit(B_DIRTY, &b->state))
 		__relink_lru(b, LIST_DIRTY);
