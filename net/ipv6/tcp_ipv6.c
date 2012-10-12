@@ -992,7 +992,10 @@ static void tcp_v6_send_response(struct sk_buff *skb, u32 seq, u32 ack, u32 win,
 				    buff->csum);
 
 	fl.proto = IPPROTO_TCP;
-	fl.oif = inet6_iif(skb);
+	if (rt6_need_strict(&fl.fl6_dst) && !oif)
+		fl.oif = inet6_iif(skb);
+	else
+		fl.oif = oif;
 	fl.fl_ip_dport = t1->dest;
 	fl.fl_ip_sport = t1->source;
 	security_skb_classify_flow(skb, &fl);
