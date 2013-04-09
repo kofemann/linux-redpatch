@@ -74,12 +74,19 @@ struct nfs_access_entry {
 	int			mask;
 };
 
+#define NFS_IO_INPROGRESS 0
+struct nfs_io_counter {
+	unsigned long flags;
+	atomic_t io_count;
+};
+
 struct nfs_lock_context {
 	atomic_t count;
 	struct list_head list;
 	struct nfs_open_context *open_context;
 	fl_owner_t lockowner;
 	pid_t pid;
+	struct nfs_io_counter io_count;
 };
 
 struct nfs4_state;
