@@ -984,20 +984,18 @@ out:
 	return ret;
 }
 
-static int nfs4_copy_open_stateid(nfs4_stateid *dst, struct nfs4_state *state)
+static void nfs4_copy_open_stateid(nfs4_stateid *dst, struct nfs4_state *state)
 {
-	int ret;
+	const nfs4_stateid *src;
 	int seq;
 
 	do {
+		src = &zero_stateid;
 		seq = read_seqbegin(&state->seqlock);
-		nfs4_stateid_copy(dst, &state->stateid);
-		ret = 0;
-		smp_rmb();
-		if (!list_empty(&state->owner->so_sequence.list))
-			ret = -EWOULDBLOCK;
+		if (test_bit(NFS_OPEN_STATE, &state->flags))
+			src = &state->open_stateid;
+		nfs4_stateid_copy(dst, src);
 	} while (read_seqretry(&state->seqlock, seq));
-	return ret;
 }
 
 /*
