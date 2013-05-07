@@ -39,7 +39,15 @@ tcpoptstrip_mangle_packet(struct sk_buff *skb,
 	u_int16_t n, o;
 	u_int8_t *opt;
 
+	/* This is a fragment, no TCP header is available */
+	if (ntohs(ip_hdr(skb)->frag_off) & IP_OFFSET)
+		return XT_CONTINUE;
+
 	if (!skb_make_writable(skb, skb->len))
+		return NF_DROP;
+
+	len = skb->len - tcphoff;
+	if (len < (int)sizeof(struct tcphdr))
 		return NF_DROP;
 
 	tcph = (struct tcphdr *)(skb_network_header(skb) + tcphoff);
