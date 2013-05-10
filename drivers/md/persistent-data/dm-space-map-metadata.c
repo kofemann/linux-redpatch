@@ -17,6 +17,55 @@
 /*----------------------------------------------------------------*/
 
 /*
+ * An edge triggered threshold.
+ */
+struct threshold {
+	bool threshold_set;
+	bool value_set;
+	dm_block_t threshold;
+	dm_block_t current_value;
+	dm_sm_threshold_fn fn;
+	void *context;
+};
+
+static void threshold_init(struct threshold *t)
+{
+	t->threshold_set = false;
+	t->value_set = false;
+}
+
+static void set_threshold(struct threshold *t, dm_block_t value,
+			  dm_sm_threshold_fn fn, void *context)
+{
+	t->threshold_set = true;
+	t->threshold = value;
+	t->fn = fn;
+	t->context = context;
+}
+
+static bool below_threshold(struct threshold *t, dm_block_t value)
+{
+	return t->threshold_set && value <= t->threshold;
+}
+
+static bool threshold_already_triggered(struct threshold *t)
+{
+	return t->value_set && below_threshold(t, t->current_value);
+}
+
+static void check_threshold(struct threshold *t, dm_block_t value)
+{
+	if (below_threshold(t, value) &&
+	    !threshold_already_triggered(t))
+		t->fn(t->context);
+
+	t->value_set = true;
+	t->current_value = value;
+}
+
+/*----------------------------------------------------------------*/
+
+/*
  * Space map interface.
  *
  * The low level disk format is written using the standard btree and
@@ -357,6 +406,18 @@ static int sm_metadata_commit(struct dm_space_map *sm)
 	return 0;
 }
 
+static int sm_metadata_register_threshold_callback(struct dm_space_map *sm,
+						   dm_block_t threshold,
+						   dm_sm_threshold_fn fn,
+						   void *context)
+{
+	struct sm_metadata *smm = container_of(sm, struct sm_metadata, sm);
+
+	set_threshold(&smm->threshold, threshold, fn, context);
+
+	return 0;
+}
+
 static int sm_metadata_root_size(struct dm_space_map *sm, size_t *result)
 {
 	*result = sizeof(struct disk_sm_root);
@@ -395,7 +456,8 @@ static struct dm_space_map ops = {
 	.new_block = sm_metadata_new_block,
 	.commit = sm_metadata_commit,
 	.root_size = sm_metadata_root_size,
-	.copy_root = sm_metadata_copy_root
+	.copy_root = sm_metadata_copy_root,
+	.register_threshold_callback = sm_metadata_register_threshold_callback
 };
 
 /*----------------------------------------------------------------*/
@@ -550,6 +612,7 @@ int dm_sm_metadata_create(struct dm_space_map *sm,
 	smm->recursion_count = 0;
 	smm->allocated_this_transaction = 0;
 	smm->nr_uncommitted = 0;
+	threshold_init(&smm->threshold);
 
 	memcpy(&smm->sm, &bootstrap_ops, sizeof(smm->sm));
 
@@ -591,6 +654,7 @@ int dm_sm_metadata_open(struct dm_space_map *sm,
 	smm->recursion_count = 0;
 	smm->allocated_this_transaction = 0;
 	smm->nr_uncommitted = 0;
+	threshold_init(&smm->threshold);
 
 	memcpy(&smm->old_ll, &smm->ll, sizeof(smm->old_ll));
 	return 0;
