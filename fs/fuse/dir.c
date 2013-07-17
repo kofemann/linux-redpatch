@@ -1129,7 +1129,6 @@ static int fuse_direntplus_link(struct file *file,
 			goto found;
 		}
 		dput(dentry);
-		dentry = NULL;
 	}
 
 	dentry = d_alloc(parent, &name);
@@ -1156,8 +1155,7 @@ found:
 
 	err = 0;
 out:
-	if (dentry)
-		dput(dentry);
+	dput(dentry);
 	return err;
 }
 
