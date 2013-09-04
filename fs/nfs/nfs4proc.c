@@ -2004,8 +2004,11 @@ static int _nfs4_do_setattr(struct inode *inode, struct rpc_cred *cred,
 			.l_owner = current->files,
 			.l_pid = current->tgid,
 		};
-		nfs4_select_rw_stateid(&arg.stateid, state, FMODE_WRITE,
-				&lockowner);
+		if (!nfs4_valid_open_stateid(state))
+			return -EBADF;
+		if (nfs4_select_rw_stateid(&arg.stateid, state, FMODE_WRITE,
+				&lockowner) == -EIO)
+			return -EBADF;
 	} else
 		nfs4_stateid_copy(&arg.stateid, &zero_stateid);
 
@@ -3371,8 +3374,9 @@ static bool nfs4_stateid_is_current(nfs4_stateid *stateid,
 {
 	nfs4_stateid current_stateid;
 
-	if (nfs4_set_rw_stateid(&current_stateid, ctx, l_ctx, fmode))
-		return false;
+	/* If the current stateid represents a lost lock, then exit */
+	if (nfs4_set_rw_stateid(&current_stateid, ctx, l_ctx, fmode) == -EIO)
+		return true;
 	return nfs4_stateid_match(stateid, &current_stateid);
 }
 
@@ -3446,16 +3450,20 @@ static void nfs4_proc_read_setup(struct nfs_read_data *data, struct rpc_message 
 	nfs41_init_sequence(&data->args.seq_args, &data->res.seq_res, 0);
 }
 
-static void nfs4_proc_read_rpc_prepare(struct rpc_task *task, struct nfs_read_data *data)
+static int nfs4_proc_read_rpc_prepare(struct rpc_task *task, struct nfs_read_data *data)
 {
 	if (nfs4_setup_sequence(NFS_SERVER(data->header->inode),
-				&data->args.seq_args,
-				&data->res.seq_res,
-				task))
-		return;
+			&data->args.seq_args,
+			&data->res.seq_res,
+			task))
+		return 0;
 	rpc_call_start(task);
-	nfs4_set_rw_stateid(&data->args.stateid, data->args.context,
-			data->args.lock_context, FMODE_READ);
+	if (nfs4_set_rw_stateid(&data->args.stateid, data->args.context,
+				data->args.lock_context, FMODE_READ) == -EIO)
+		return -EIO;
+	if (unlikely(test_bit(NFS_CONTEXT_BAD, &data->args.context->flags)))
+		return -EIO;
+	return 0;
 }
 
 /* Reset the the nfs_read_data to send the read to the MDS. */
@@ -3565,16 +3573,20 @@ static void nfs4_proc_write_setup(struct nfs_write_data *data, struct rpc_messag
 	nfs41_init_sequence(&data->args.seq_args, &data->res.seq_res, 1);
 }
 
-static void nfs4_proc_write_rpc_prepare(struct rpc_task *task, struct nfs_write_data *data)
+static int nfs4_proc_write_rpc_prepare(struct rpc_task *task, struct nfs_write_data *data)
 {
 	if (nfs4_setup_sequence(NFS_SERVER(data->header->inode),
-				&data->args.seq_args,
-				&data->res.seq_res,
-				task))
-		return;
+			&data->args.seq_args,
+			&data->res.seq_res,
+			task))
+		return 0;
 	rpc_call_start(task);
-	nfs4_set_rw_stateid(&data->args.stateid, data->args.context,
-			data->args.lock_context, FMODE_WRITE);
+	if (nfs4_set_rw_stateid(&data->args.stateid, data->args.context,
+				data->args.lock_context, FMODE_WRITE) == -EIO)
+		return -EIO;
+	if (unlikely(test_bit(NFS_CONTEXT_BAD, &data->args.context->flags)))
+		return -EIO;
+	return 0;
 }
 
 static void nfs4_proc_commit_rpc_prepare(struct rpc_task *task, struct nfs_commit_data *data)
@@ -4613,9 +4625,9 @@ static int nfs4_proc_unlck(struct nfs4_state *state, int cmd, struct file_lock *
 	if (status != 0)
 		goto out;
 	/* Is this a delegated lock? */
-	if (test_bit(NFS_DELEGATED_STATE, &state->flags))
-		goto out;
 	lsp = request->fl_u.nfs4_fl.owner;
+	if (test_bit(NFS_LOCK_INITIALIZED, &lsp->ls_flags) == 0)
+		goto out;
 	seqid = nfs_alloc_seqid(&lsp->ls_seqid, GFP_KERNEL);
 	status = -ENOMEM;
 	if (seqid == NULL)
@@ -4867,6 +4879,10 @@ static int nfs4_lock_expired(struct nfs4_state *state, struct file_lock *request
 	err = nfs4_set_lock_state(state, request);
 	if (err != 0)
 		return err;
+	if (!recover_lost_locks) {
+		set_bit(NFS_LOCK_LOST, &request->fl_u.nfs4_fl.owner->ls_flags);
+		return 0;
+	}
 	do {
 		if (test_bit(NFS_DELEGATED_STATE, &state->flags) != 0)
 			return 0;
