@@ -1862,6 +1862,8 @@ done:
 nomem:
 	*memcg = NULL;
 	css_put(&mem->css);
+	if (gfp_mask & __GFP_NOFAIL)
+		return 0;
 	return -ENOMEM;
 bypass:
 	*memcg = NULL;
