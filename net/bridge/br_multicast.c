@@ -678,9 +678,10 @@ rehash:
 
 	mp->br = br;
 	mp->addr = *group;
-	setup_timer(&mp->timer, br_multicast_group_expired,
-		    (unsigned long)mp);
 	setup_timer(&mp->query_timer, br_multicast_group_query_expired,
+		    (unsigned long)mp);
+
+	setup_timer(&mp->timer, br_multicast_group_expired,
 		    (unsigned long)mp);
 
 	hlist_add_head_rcu(&mp->hlist[mdb->ver], &mdb->mhash[hash]);
@@ -697,7 +698,6 @@ static int br_multicast_add_group(struct net_bridge *br,
 	struct net_bridge_mdb_entry *mp;
 	struct net_bridge_port_group *p;
 	struct net_bridge_port_group **pp;
-	unsigned long now = jiffies;
 	int err;
 
 	spin_lock(&br->multicast_lock);
@@ -712,13 +712,12 @@ static int br_multicast_add_group(struct net_bridge *br,
 
 	if (!port) {
 		mp->mglist = true;
-		mod_timer(&mp->timer, now + br->multicast_membership_interval);
 		goto out;
 	}
 
 	for (pp = &mp->ports; (p = *pp); pp = &p->next) {
 		if (p->port == port)
-			goto found;
+			goto out;
 		if ((unsigned long)p->port < (unsigned long)port)
 			break;
 	}
@@ -739,8 +738,6 @@ static int br_multicast_add_group(struct net_bridge *br,
 
 	rcu_assign_pointer(*pp, p);
 
-found:
-	mod_timer(&p->timer, now + br->multicast_membership_interval);
 out:
 	err = 0;
 
@@ -1167,6 +1164,10 @@ static int br_ip4_multicast_query(struct net_bridge *br,
 	if (!mp)
 		goto out;
 
+	setup_timer(&mp->timer, br_multicast_group_expired, (unsigned long)mp);
+	mod_timer(&mp->timer, now + br->multicast_membership_interval);
+	mp->timer_armed = true;
+
 	max_delay *= br->multicast_last_member_count;
 
 	if (mp->mglist &&
@@ -1235,6 +1236,10 @@ static int br_ip6_multicast_query(struct net_bridge *br,
 	mp = br_mdb_ip6_get(br->mdb, group);
 	if (!mp)
 		goto out;
+
+	setup_timer(&mp->timer, br_multicast_group_expired, (unsigned long)mp);
+	mod_timer(&mp->timer, now + br->multicast_membership_interval);
+	mp->timer_armed = true;
 
 	max_delay *= br->multicast_last_member_count;
 	if (mp->mglist &&
@@ -1306,7 +1311,7 @@ static void br_multicast_leave_group(struct net_bridge *br,
 		     br->multicast_last_member_interval;
 
 	if (!port) {
-		if (mp->mglist &&
+		if (mp->mglist && mp->timer_armed &&
 		    (timer_pending(&mp->timer) ?
 		     time_after(mp->timer.expires, time) :
 		     try_to_del_timer_sync(&mp->timer) >= 0)) {
@@ -1315,25 +1320,6 @@ static void br_multicast_leave_group(struct net_bridge *br,
 			mp->queries_sent = 0;
 			mod_timer(&mp->query_timer, now);
 		}
-
-		goto out;
-	}
-
-	for (p = mp->ports; p; p = p->next) {
-		if (p->port != port)
-			continue;
-
-		if (!hlist_unhashed(&p->mglist) &&
-		    (timer_pending(&p->timer) ?
-		     time_after(p->timer.expires, time) :
-		     try_to_del_timer_sync(&p->timer) >= 0)) {
-			mod_timer(&p->timer, time);
-
-			p->queries_sent = 0;
-			mod_timer(&p->query_timer, now);
-		}
-
-		break;
 	}
 
 out:
@@ -1692,6 +1678,7 @@ void br_multicast_stop(struct net_bridge *br)
 					  hlist[ver]) {
 			del_timer(&mp->timer);
 			del_timer(&mp->query_timer);
+			mp->timer_armed = false;
 			call_rcu_bh(&mp->rcu, br_multicast_free_group);
 		}
 	}
