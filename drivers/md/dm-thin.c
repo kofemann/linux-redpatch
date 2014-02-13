@@ -1926,6 +1926,11 @@ static int parse_pool_features(struct dm_arg_set *as, struct pool_features *pf,
 	return r;
 }
 
+static sector_t get_dev_size(struct block_device *bdev)
+{
+	return i_size_read(bdev->bd_inode) >> SECTOR_SHIFT;
+}
+
 /*
  * thin-pool <metadata dev> <data dev>
  *	     <data block size (sectors)>
@@ -1949,8 +1954,6 @@ static int pool_ctr(struct dm_target *ti, unsigned argc, char **argv)
 	dm_block_t low_water_blocks;
 	struct dm_dev *metadata_dev;
 	fmode_t metadata_mode;
-	sector_t metadata_dev_size;
-	char b[BDEVNAME_SIZE];
 
 	/*
 	 * FIXME Remove validation from scope of lock.
@@ -1982,11 +1985,7 @@ static int pool_ctr(struct dm_target *ti, unsigned argc, char **argv)
 		ti->error = "Error opening metadata block device";
 		goto out_unlock;
 	}
-
-	metadata_dev_size = i_size_read(metadata_dev->bdev->bd_inode) >> SECTOR_SHIFT;
-	if (metadata_dev_size > THIN_METADATA_MAX_SECTORS_WARNING)
-		DMWARN("Metadata device %s is larger than %u sectors: excess space will not be used.",
-		       bdevname(metadata_dev->bdev, b), THIN_METADATA_MAX_SECTORS);
+	warn_if_metadata_device_too_big(metadata_dev->bdev);
 
 	r = dm_get_device(ti, argv[1], FMODE_READ | FMODE_WRITE, &data_dev);
 	if (r) {
