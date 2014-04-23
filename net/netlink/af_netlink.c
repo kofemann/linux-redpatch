@@ -586,6 +586,41 @@ retry:
 	return err;
 }
 
+/**
+ * __netlink_capable - General netlink message capability test
+ * @nsp: NETLINK_CB of the socket buffer holding a netlink command from userspace.
+ * @cap: The capability to use
+ *
+ * Test to see if the opener of the socket we received the message
+ * from had when the netlink socket was created and the sender of the
+ * message has has the capability @cap.
+ *
+ * This is RHEL version of upstream __netlink_ns_capable. See the comment at
+ * sk_capable.
+ */
+bool __netlink_capable(const struct netlink_skb_parms *nsp, int cap)
+{
+	return ((nsp->flags & NETLINK_SKB_DST) ||
+		file_init_ns_capable(nsp->sk->sk_socket->file, cap)) &&
+		capable(cap);
+}
+EXPORT_SYMBOL(__netlink_capable);
+
+/**
+ * netlink_capable - Netlink global message capability test
+ * @skb: socket buffer holding a netlink command from userspace
+ * @cap: The capability to use
+ *
+ * Test to see if the opener of the socket we received the message
+ * from had when the netlink socket was created and the sender of the
+ * message has has the capability @cap in all user namespaces.
+ */
+bool netlink_capable(const struct sk_buff *skb, int cap)
+{
+	return __netlink_capable(&NETLINK_CB(skb), cap);
+}
+EXPORT_SYMBOL(netlink_capable);
+
 static inline int netlink_allowed(const struct socket *sock, unsigned int flag)
 {
 	return (nl_table[sock->sk->sk_protocol].nl_nonroot & flag) ||

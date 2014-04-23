@@ -311,6 +311,9 @@ static inline int netlink_dump_start(struct sock *ssk, struct sk_buff *skb,
 #define NL_NONROOT_SEND 0x2
 extern void netlink_set_nonroot(int protocol, unsigned flag);
 
+bool __netlink_capable(const struct netlink_skb_parms *nsp, int cap);
+bool netlink_capable(const struct sk_buff *skb, int cap);
+
 #endif /* __KERNEL__ */
 
 #endif	/* __LINUX_NETLINK_H */
