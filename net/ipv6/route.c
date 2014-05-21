@@ -76,8 +76,9 @@
 #define CLONE_OFFLINK_ROUTE 0
 
 enum rt6_nud_state {
-	RT6_NUD_FAIL_HARD = -2,
-	RT6_NUD_FAIL_SOFT = -1,
+	RT6_NUD_FAIL_HARD = -3,
+	RT6_NUD_FAIL_PROBE = -2,
+	RT6_NUD_FAIL_DO_RR = -1,
 	RT6_NUD_SUCCEED = 1
 };
 
@@ -335,7 +336,8 @@ static void rt6_probe(struct rt6_info *rt)
 		work = kmalloc(sizeof(*work), GFP_ATOMIC);
 
 		if (work)
-			neigh->updated = jiffies;
+			__neigh_set_probe_once(neigh);
+
 		write_unlock_bh(&neigh->lock);
 
 		if (work) {
