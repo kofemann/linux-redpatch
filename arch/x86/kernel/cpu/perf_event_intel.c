@@ -2720,7 +2720,6 @@ __init int intel_pmu_init(void)
 
 	case 60: /* Haswell Client */
 	case 70:
-	case 71:
 	case 63:
 	case 69:
 		x86_pmu.late_ack = true;
