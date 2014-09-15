@@ -25,6 +25,11 @@
 
 /*----------------------------------------------------------------*/
 
+/*
+ * Thin metadata superblock flags.
+ */
+#define THIN_METADATA_NEEDS_CHECK_FLAG (1 << 0)
+
 struct dm_pool_metadata;
 struct dm_thin_device;
 
@@ -129,7 +134,7 @@ dm_thin_id dm_thin_dev_id(struct dm_thin_device *td);
 
 struct dm_thin_lookup_result {
 	dm_block_t block;
-	unsigned shared:1;
+	bool shared:1;
 };
 
 /*
@@ -159,6 +164,8 @@ int dm_thin_remove_block(struct dm_thin_device *td, dm_block_t block);
  */
 bool dm_thin_changed_this_transaction(struct dm_thin_device *td);
 
+bool dm_pool_changed_this_transaction(struct dm_pool_metadata *pmd);
+
 bool dm_thin_aborted_changes(struct dm_thin_device *td);
 
 int dm_thin_get_highest_mapped_block(struct dm_thin_device *td,
@@ -179,11 +186,14 @@ int dm_pool_get_data_block_size(struct dm_pool_metadata *pmd, sector_t *result);
 
 int dm_pool_get_data_dev_size(struct dm_pool_metadata *pmd, dm_block_t *result);
 
+int dm_pool_block_is_used(struct dm_pool_metadata *pmd, dm_block_t b, bool *result);
+
 /*
  * Returns -ENOSPC if the new size is too small and already allocated
  * blocks would be lost.
  */
 int dm_pool_resize_data_dev(struct dm_pool_metadata *pmd, dm_block_t new_size);
+int dm_pool_resize_metadata_dev(struct dm_pool_metadata *pmd, dm_block_t new_size);
 
 /*
  * Flicks the underlying block manager into read only mode, so you know
@@ -196,6 +206,12 @@ int dm_pool_register_metadata_threshold(struct dm_pool_metadata *pmd,
 					dm_block_t threshold,
 					dm_sm_threshold_fn fn,
 					void *context);
+
+/*
+ * Updates the superblock immediately.
+ */
+int dm_pool_metadata_set_needs_check(struct dm_pool_metadata *pmd);
+bool dm_pool_metadata_needs_check(struct dm_pool_metadata *pmd);
 
 /*----------------------------------------------------------------*/
 

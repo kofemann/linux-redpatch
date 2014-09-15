@@ -76,7 +76,7 @@
 
 #define THIN_SUPERBLOCK_MAGIC 27022010
 #define THIN_SUPERBLOCK_LOCATION 0
-#define THIN_VERSION 1
+#define THIN_VERSION 2
 #define THIN_METADATA_CACHE_SIZE 64
 #define SECTOR_TO_BLOCK_SHIFT 3
 
@@ -1363,6 +1363,12 @@ dm_thin_id dm_thin_dev_id(struct dm_thin_device *td)
 	return td->id;
 }
 
+/*
+ * Check whether @time (of block creation) is older than @td's last snapshot.
+ * If so then the associated block is shared with the last snapshot device.
+ * Any block on a device created *after* the device last got snapshotted is
+ * necessarily not shared.
+ */
 static bool __snapshotted_since(struct dm_thin_device *td, uint32_t time)
 {
 	return td->snapshotted_time > time;
@@ -1472,6 +1478,20 @@ int dm_thin_remove_block(struct dm_thin_device *td, dm_block_t block)
 	return r;
 }
 
+int dm_pool_block_is_used(struct dm_pool_metadata *pmd, dm_block_t b, bool *result)
+{
+	int r;
+	uint32_t ref_count;
+
+	down_read(&pmd->root_lock);
+	r = dm_sm_get_count(pmd->data_sm, b, &ref_count);
+	if (!r)
+		*result = (ref_count != 0);
+	up_read(&pmd->root_lock);
+
+	return r;
+}
+
 bool dm_thin_changed_this_transaction(struct dm_thin_device *td)
 {
 	int r;
@@ -1479,6 +1499,23 @@ bool dm_thin_changed_this_transaction(struct dm_thin_device *td)
 	down_read(&td->pmd->root_lock);
 	r = td->changed;
 	up_read(&td->pmd->root_lock);
+
+	return r;
+}
+
+bool dm_pool_changed_this_transaction(struct dm_pool_metadata *pmd)
+{
+	bool r = false;
+	struct dm_thin_device *td, *tmp;
+
+	down_read(&pmd->root_lock);
+	list_for_each_entry_safe(td, tmp, &pmd->thin_devices, list) {
+		if (td->changed) {
+			r = td->changed;
+			break;
+		}
+	}
+	up_read(&pmd->root_lock);
 
 	return r;
 }
@@ -1659,12 +1696,12 @@ int dm_thin_get_highest_mapped_block(struct dm_thin_device *td,
 	return r;
 }
 
-static int __resize_data_dev(struct dm_pool_metadata *pmd, dm_block_t new_count)
+static int __resize_space_map(struct dm_space_map *sm, dm_block_t new_count)
 {
 	int r;
 	dm_block_t old_count;
 
-	r = dm_sm_get_nr_blocks(pmd->data_sm, &old_count);
+	r = dm_sm_get_nr_blocks(sm, &old_count);
 	if (r)
 		return r;
 
@@ -1672,11 +1709,11 @@ static int __resize_data_dev(struct dm_pool_metadata *pmd, dm_block_t new_count)
 		return 0;
 
 	if (new_count < old_count) {
-		DMERR("cannot reduce size of data device");
+		DMERR("cannot reduce size of space map");
 		return -EINVAL;
 	}
 
-	return dm_sm_extend(pmd->data_sm, new_count - old_count);
+	return dm_sm_extend(sm, new_count - old_count);
 }
 
 int dm_pool_resize_data_dev(struct dm_pool_metadata *pmd, dm_block_t new_count)
@@ -1685,7 +1722,19 @@ int dm_pool_resize_data_dev(struct dm_pool_metadata *pmd, dm_block_t new_count)
 
 	down_write(&pmd->root_lock);
 	if (!pmd->fail_io)
-		r = __resize_data_dev(pmd, new_count);
+		r = __resize_space_map(pmd->data_sm, new_count);
+	up_write(&pmd->root_lock);
+
+	return r;
+}
+
+int dm_pool_resize_metadata_dev(struct dm_pool_metadata *pmd, dm_block_t new_count)
+{
+	int r = -EINVAL;
+
+	down_write(&pmd->root_lock);
+	if (!pmd->fail_io)
+		r = __resize_space_map(pmd->metadata_sm, new_count);
 	up_write(&pmd->root_lock);
 
 	return r;
@@ -1698,6 +1747,7 @@ void dm_pool_metadata_read_only(struct dm_pool_metadata *pmd)
 	dm_bm_set_read_only(pmd->bm);
 	up_write(&pmd->root_lock);
 }
+
 void dm_pool_metadata_read_write(struct dm_pool_metadata *pmd)
 {
 	down_write(&pmd->root_lock);
@@ -1720,3 +1770,37 @@ int dm_pool_register_metadata_threshold(struct dm_pool_metadata *pmd,
 	return r;
 }
 
+int dm_pool_metadata_set_needs_check(struct dm_pool_metadata *pmd)
+{
+	int r;
+	struct dm_block *sblock;
+	struct thin_disk_superblock *disk_super;
+
+	down_write(&pmd->root_lock);
+	pmd->flags |= THIN_METADATA_NEEDS_CHECK_FLAG;
+
+	r = superblock_lock(pmd, &sblock);
+	if (r) {
+		DMERR("couldn't read superblock");
+		goto out;
+	}
+
+	disk_super = dm_block_data(sblock);
+	disk_super->flags = cpu_to_le32(pmd->flags);
+
+	dm_bm_unlock(sblock);
+out:
+	up_write(&pmd->root_lock);
+	return r;
+}
+
+bool dm_pool_metadata_needs_check(struct dm_pool_metadata *pmd)
+{
+	bool needs_check;
+
+	down_read(&pmd->root_lock);
+	needs_check = pmd->flags & THIN_METADATA_NEEDS_CHECK_FLAG;
+	up_read(&pmd->root_lock);
+
+	return needs_check;
+}
