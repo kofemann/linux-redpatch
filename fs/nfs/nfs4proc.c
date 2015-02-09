@@ -5653,9 +5653,12 @@ static int _nfs4_proc_create_session(struct nfs_client *clp)
 		.rpc_resp = &res,
 	};
 	int status;
+	int flags = SESSION4_PERSIST;
 
 	nfs4_init_channel_attrs(&args);
-	args.flags = (SESSION4_PERSIST | SESSION4_BACK_CHAN);
+	if (!is_ds_only_client(clp))
+		flags |= SESSION4_BACK_CHAN;
+	args.flags = flags;
 
 	status = rpc_call_sync(session->clp->cl_rpcclient, &msg, RPC_TASK_TIMEOUT);
 
