@@ -848,10 +848,22 @@ static void xs_error_report(struct sock *sk)
 	read_unlock_bh(&sk->sk_callback_lock);
 }
 
+static void xs_sock_reset_connection_flags(struct rpc_xprt *xprt)
+{
+	smp_mb__before_atomic();
+	clear_bit(XPRT_CONNECTION_ABORT, &xprt->state);
+	clear_bit(XPRT_CONNECTION_CLOSE, &xprt->state);
+	clear_bit(XPRT_CLOSE_WAIT, &xprt->state);
+	clear_bit(XPRT_CLOSING, &xprt->state);
+	smp_mb__after_atomic();
+}
+
+
 static void xs_reset_transport(struct sock_xprt *transport)
 {
 	struct socket *sock = transport->sock;
 	struct sock *sk = transport->inet;
+	 struct rpc_xprt *xprt = &transport->xprt;
 
 	if (sk == NULL)
 		return;
@@ -864,10 +876,11 @@ static void xs_reset_transport(struct sock_xprt *transport)
 
 	xs_restore_old_callbacks(transport, sk);
 	write_unlock_bh(&sk->sk_callback_lock);
+	xs_sock_reset_connection_flags(xprt);
 
 	sk->sk_no_check = 0;
 
-	trace_rpc_socket_close(&transport->xprt, sock);
+	trace_rpc_socket_close(xprt, sock);
 	sock_release(sock);
 }
 
@@ -892,11 +905,6 @@ static void xs_close(struct rpc_xprt *xprt)
 	xs_reset_transport(transport);
 	xprt->reestablish_timeout = 0;
 
-	smp_mb__before_clear_bit();
-	clear_bit(XPRT_CONNECTION_ABORT, &xprt->state);
-	clear_bit(XPRT_CLOSE_WAIT, &xprt->state);
-	clear_bit(XPRT_CLOSING, &xprt->state);
-	smp_mb__after_clear_bit();
 	xprt_disconnect_done(xprt);
 }
 
@@ -1499,16 +1507,6 @@ static void xs_tcp_cancel_linger_timeout(struct rpc_xprt *xprt)
 		return;
 	clear_bit(XPRT_CONNECTION_ABORT, &xprt->state);
 	xprt_clear_connecting(xprt);
-}
-
-static void xs_sock_reset_connection_flags(struct rpc_xprt *xprt)
-{
-	smp_mb__before_clear_bit();
-	clear_bit(XPRT_CONNECTION_ABORT, &xprt->state);
-	clear_bit(XPRT_CONNECTION_CLOSE, &xprt->state);
-	clear_bit(XPRT_CLOSE_WAIT, &xprt->state);
-	clear_bit(XPRT_CLOSING, &xprt->state);
-	smp_mb__after_clear_bit();
 }
 
 static void xs_sock_mark_closed(struct rpc_xprt *xprt)
