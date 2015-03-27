@@ -142,7 +142,7 @@ static struct dentry *gfs2_get_dentry(struct super_block *sb,
 	struct inode *inode;
 	struct dentry *dentry;
 
-	inode = gfs2_ilookup(sb, inum->no_addr, 0);
+	inode = gfs2_ilookup(sb, inum->no_addr);
 	if (inode) {
 		if (GFS2_I(inode)->i_no_formal_ino != inum->no_formal_ino) {
 			iput(inode);
