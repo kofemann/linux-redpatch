@@ -1686,13 +1686,13 @@ mountpoint_last(struct nameidata *nd, struct path *path)
 			goto out_unlock;
 		}
 		dentry = dir->i_op->lookup(dir, new, nd);
-		if (IS_ERR(dentry)) {
-			error = PTR_ERR(dentry);
-			goto out_unlock;
-		}
-		if (dentry)
+		if (dentry) {
 			dput(new);
-		else
+			if (IS_ERR(dentry)) {
+				error = PTR_ERR(dentry);
+				goto out_unlock;
+			}
+		} else
 			dentry = new;
 	}
 	mutex_unlock(&dir->i_mutex);
@@ -1751,13 +1751,22 @@ path_mountpoint(int dfd, struct filename *s, struct path *path, unsigned int fla
 		struct path link = *path;
 		err = -ELOOP;
 		current->total_link_count++;
-		if (current->total_link_count >= 40)
+		if (current->total_link_count >= 40) {
+			dput(path->dentry);
+			path_put(&nd.path);
 			break;
+		}
 		nd.flags |= LOOKUP_PARENT;
 		err = __do_follow_link(&link, &nd);
 		if (err)
 			break;
 		err = mountpoint_last(&nd, path);
+		/*
+		 * remember to replace with put_link() when/if we get
+		 * to backporting commit def4af30.
+		 */
+		if (nd.last_type == LAST_NORM)
+			__putname(nd.last.name);
 	}
 out:
 	if (nd.root.mnt)
