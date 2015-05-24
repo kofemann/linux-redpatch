@@ -34,7 +34,7 @@ EXPORT_SYMBOL(inet_csk_timer_bug_msg);
  */
 struct local_ports sysctl_local_ports __read_mostly = {
 	.lock = SEQLOCK_UNLOCKED,
-	.range = { 32768, 61000 },
+	.range = { 32768, 60999 },
 };
 
 unsigned long *sysctl_local_reserved_ports;
