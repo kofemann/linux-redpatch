@@ -721,7 +721,7 @@ int gfs2_create_inode(struct inode *dir, struct dentry *dentry,
 	struct inode *inode = NULL;
 	struct gfs2_inode *dip = GFS2_I(dir), *ip;
 	struct gfs2_sbd *sdp = GFS2_SB(&dip->i_inode);
-	struct gfs2_glock *io_gl;
+	struct gfs2_glock *io_gl = NULL;
 	int error, free_vfs_inode = 0;
 	struct buffer_head *bh = NULL;
 	u32 aflags = 0;
@@ -811,6 +811,8 @@ int gfs2_create_inode(struct inode *dir, struct dentry *dentry,
 	if (error)
 		goto fail_gunlock2;
 
+	BUG_ON(test_and_set_bit(GLF_INODE_CREATING, &io_gl->gl_flags));
+
 	error = gfs2_glock_nq_init(io_gl, LM_ST_SHARED, GL_EXACT, &ip->i_iopen_gh);
 	if (error)
 		goto fail_gunlock2;
@@ -843,6 +845,7 @@ int gfs2_create_inode(struct inode *dir, struct dentry *dentry,
 	gfs2_inplace_release(dip);
 	gfs2_quota_unlock(dip);
 	mark_inode_dirty(inode);
+	clear_bit(GLF_INODE_CREATING, &io_gl->gl_flags);
 	gfs2_glock_dq_uninit_m(2, ghs);
 	d_instantiate(dentry, inode);
 	return 0;
@@ -854,6 +857,8 @@ fail_gunlock3:
 	goto fail_gunlock;
 
 fail_gunlock2:
+	if (io_gl)
+		clear_bit(GLF_INODE_CREATING, &io_gl->gl_flags);
 	gfs2_glock_dq_uninit(ghs + 1);
 fail_free_inode:
 	if (ip->i_gl)
