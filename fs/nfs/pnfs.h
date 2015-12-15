@@ -209,11 +209,19 @@ struct pnfs_layout_segment *pnfs_update_layout(struct inode *ino,
 					       enum pnfs_iomode iomode,
 					       gfp_t gfp_flags);
 
+int pnfs_read_done_resend_to_mds(struct inode *inode, struct list_head *head,
+			const struct nfs_pgio_completion_ops *compl_ops,
+			struct nfs_direct_req *dreq);
+int pnfs_write_done_resend_to_mds(struct inode *inode, struct list_head *head,
+			const struct nfs_pgio_completion_ops *compl_ops,
+			struct nfs_direct_req *dreq);
+
 void nfs4_deviceid_mark_client_invalid(struct nfs_client *clp);
 
 /* nfs4_deviceid_flags */
 enum {
 	NFS_DEVICEID_INVALID = 0,       /* set when MDS clientid recalled */
+	NFS_DEVICEID_UNAVAILABLE,	/* device temporarily unavailable */
 };
 
 /* pnfs_dev.c */
@@ -223,6 +231,7 @@ struct nfs4_deviceid_node {
 	const struct pnfs_layoutdriver_type *ld;
 	const struct nfs_client		*nfs_client;
 	unsigned long 			flags;
+	unsigned long			timestamp_unavailable;
 	struct nfs4_deviceid		deviceid;
 	atomic_t			ref;
 };
@@ -236,6 +245,8 @@ void nfs4_init_deviceid_node(struct nfs4_deviceid_node *,
 			     const struct nfs4_deviceid *);
 struct nfs4_deviceid_node *nfs4_insert_deviceid_node(struct nfs4_deviceid_node *);
 bool nfs4_put_deviceid_node(struct nfs4_deviceid_node *);
+void nfs4_mark_deviceid_unavailable(struct nfs4_deviceid_node *node);
+bool nfs4_test_deviceid_unavailable(struct nfs4_deviceid_node *node);
 void nfs4_deviceid_purge_client(const struct nfs_client *);
 
 static inline int lo_fail_bit(u32 iomode)

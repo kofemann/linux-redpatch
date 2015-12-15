@@ -41,6 +41,8 @@
 #define NFS4_DEVICE_ID_HASH_SIZE	(1 << NFS4_DEVICE_ID_HASH_BITS)
 #define NFS4_DEVICE_ID_HASH_MASK	(NFS4_DEVICE_ID_HASH_SIZE - 1)
 
+#define PNFS_DEVICE_RETRY_TIMEOUT (120*HZ)
+
 static struct hlist_head nfs4_deviceid_cache[NFS4_DEVICE_ID_HASH_SIZE];
 static DEFINE_SPINLOCK(nfs4_deviceid_lock);
 
@@ -216,6 +218,36 @@ nfs4_put_deviceid_node(struct nfs4_deviceid_node *d)
 	return true;
 }
 EXPORT_SYMBOL_GPL(nfs4_put_deviceid_node);
+
+void
+nfs4_mark_deviceid_unavailable(struct nfs4_deviceid_node *node)
+{
+	node->timestamp_unavailable = jiffies;
+	set_bit(NFS_DEVICEID_UNAVAILABLE, &node->flags);
+}
+EXPORT_SYMBOL_GPL(nfs4_mark_deviceid_unavailable);
+
+bool
+nfs4_test_deviceid_unavailable(struct nfs4_deviceid_node *node)
+{
+	u32 *p = (u32 *)&node->deviceid;
+
+	if (test_bit(NFS_DEVICEID_UNAVAILABLE, &node->flags)) {
+		unsigned long start, end;
+
+		end = jiffies;
+		start = end - PNFS_DEVICE_RETRY_TIMEOUT;
+		if (time_in_range(node->timestamp_unavailable, start, end))
+			return true;
+
+		printk(KERN_INFO "NFS: %s: re-enable device [%x%x%x%x]", __func__,
+			p[0], p[1], p[2], p[3]);
+
+		clear_bit(NFS_DEVICEID_UNAVAILABLE, &node->flags);
+	}
+	return false;
+}
+EXPORT_SYMBOL_GPL(nfs4_test_deviceid_unavailable);
 
 static void
 _deviceid_purge_client(const struct nfs_client *clp, long hash)

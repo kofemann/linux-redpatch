@@ -41,6 +41,9 @@
 #define NFS4_PNFS_MAX_STRIPE_CNT 4096
 #define NFS4_PNFS_MAX_MULTI_CNT  256 /* 256 fit into a u8 stripe_index */
 
+/* error codes for internal use */
+#define NFS4ERR_RESET_TO_MDS   12001
+
 enum stripetype4 {
 	STRIPE_SPARSE = 1,
 	STRIPE_DENSE = 2
@@ -111,6 +114,12 @@ static inline struct nfs4_deviceid_node *
 FILELAYOUT_DEVID_NODE(struct pnfs_layout_segment *lseg)
 {
 	return &FILELAYOUT_LSEG(lseg)->dsaddr->id_node;
+}
+
+static inline bool
+filelayout_test_devid_invalid(struct nfs4_deviceid_node *node)
+{
+	return test_bit(NFS_DEVICEID_INVALID, &node->flags);
 }
 
 extern struct nfs_fh *
