@@ -127,9 +127,12 @@ static int filelayout_async_handle_error(struct rpc_task *task,
 					 struct nfs_client *clp,
 					 struct pnfs_layout_segment *lseg)
 {
-	struct nfs_server *mds_server = NFS_SERVER(state->inode);
+	struct pnfs_layout_hdr *lo = lseg->pls_layout;
+	struct inode *inode = lo->plh_inode;
+	struct nfs_server *mds_server = NFS_SERVER(inode);
 	struct nfs4_deviceid_node *devid = FILELAYOUT_DEVID_NODE(lseg);
 	struct nfs_client *mds_client = mds_server->nfs_client;
+	struct nfs4_slot_table *tbl = &clp->cl_session->fc_slot_table;
 
 	u32 *p = (u32 *)&devid->deviceid;
 
@@ -179,6 +182,7 @@ static int filelayout_async_handle_error(struct rpc_task *task,
 	case -ETIMEDOUT:
 	case -EPIPE:
 		nfs4_mark_deviceid_unavailable(devid);
+		rpc_wake_up(&tbl->slot_tbl_waitq);
 	default:
 		printk(KERN_INFO "NFS: %s: DS %pISpc [%x%x%x%x] error. Retry through MDS %d\n", __func__,
 			&task->tk_client->cl_xprt->addr, p[0], p[1], p[2], p[3], task->tk_status);
@@ -270,7 +274,7 @@ static void filelayout_read_prepare(struct rpc_task *task, void *data)
 	}
 	if (filelayout_reset_to_mds(rdata->header->lseg)) {
 		dprintk("%s task %u reset io to MDS\n", __func__, task->tk_pid);
-		nfs4_reset_read(task, rdata);
+		filelayout_reset_read(rdata);
 		rpc_exit(task, 0);
 		return;
 	}
@@ -292,6 +296,12 @@ static void filelayout_read_call_done(struct rpc_task *task, void *data)
 	struct nfs_read_data *rdata = data;
 
 	dprintk("--> %s task->tk_status %d\n", __func__, task->tk_status);
+
+	if (test_bit(NFS_IOHDR_REDO, &rdata->header->flags) &&
+	    task->tk_status == 0) {
+		nfs41_sequence_done(task, &rdata->res.seq_res);
+		return;
+	}
 
 	/* Note this may cause RPC to be resent */
 	rdata->header->mds_ops->rpc_call_done(task, data);
@@ -373,7 +383,7 @@ static void filelayout_write_prepare(struct rpc_task *task, void *data)
 	}
 	if (filelayout_reset_to_mds(wdata->header->lseg)) {
 		dprintk("%s task %u reset io to MDS\n", __func__, task->tk_pid);
-		nfs4_reset_write(task, wdata);
+		filelayout_reset_write(wdata);
 		rpc_exit(task, 0);
 		return;
 	}
@@ -391,6 +401,12 @@ static void filelayout_write_prepare(struct rpc_task *task, void *data)
 static void filelayout_write_call_done(struct rpc_task *task, void *data)
 {
 	struct nfs_write_data *wdata = data;
+
+	if (test_bit(NFS_IOHDR_REDO, &wdata->header->flags) &&
+	    task->tk_status == 0) {
+		nfs41_sequence_done(task, &wdata->res.seq_res);
+		return;
+	}
 
 	/* Note this may cause RPC to be resent */
 	wdata->header->mds_ops->rpc_call_done(task, data);

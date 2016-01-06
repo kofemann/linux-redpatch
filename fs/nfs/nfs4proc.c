@@ -438,7 +438,7 @@ static void nfs41_sequence_free_slot(struct nfs4_sequence_res *res)
 	res->sr_slot = NULL;
 }
 
-static int nfs41_sequence_done(struct rpc_task *task, struct nfs4_sequence_res *res)
+int nfs41_sequence_done(struct rpc_task *task, struct nfs4_sequence_res *res)
 {
 	unsigned long timestamp;
 	struct nfs_client *clp;
@@ -535,6 +535,7 @@ out_retry:
 	rpc_delay(task, NFS4_POLL_RETRY_MAX);
 	return 0;
 }
+EXPORT_SYMBOL_GPL(nfs41_sequence_done);
 
 static int nfs4_sequence_done(struct rpc_task *task,
 			       struct nfs4_sequence_res *res)
@@ -3538,23 +3539,6 @@ static int nfs4_proc_read_rpc_prepare(struct rpc_task *task, struct nfs_read_dat
 	return 0;
 }
 
-/* Reset the the nfs_read_data to send the read to the MDS. */
-void nfs4_reset_read(struct rpc_task *task, struct nfs_read_data *data)
-{
-	struct nfs_pgio_header *hdr = data->header;
-	struct inode *inode = hdr->inode;
-
-	dprintk("%s Reset task for i/o through\n", __func__);
-	data->ds_clp = NULL;
-	/* offsets will differ in the dense stripe case */
-	data->args.offset = data->mds_offset;
-	data->args.fh     = NFS_FH(inode);
-	data->read_done_cb = nfs4_read_done_cb;
-	task->tk_ops = hdr->mds_ops;
-	rpc_task_reset_client(task, NFS_CLIENT(inode));
-}
-EXPORT_SYMBOL_GPL(nfs4_reset_read);
-
 static int nfs4_write_done_cb(struct rpc_task *task, struct nfs_write_data *data)
 {
 	struct inode *inode = data->header->inode;
@@ -3593,24 +3577,6 @@ static int nfs4_write_done(struct rpc_task *task, struct nfs_write_data *data)
 	return data->write_done_cb ? data->write_done_cb(task, data) :
 		nfs4_write_done_cb(task, data);
 }
-
-/* Reset the the nfs_write_data to send the write to the MDS. */
-void nfs4_reset_write(struct rpc_task *task, struct nfs_write_data *data)
-{
-	struct nfs_pgio_header *hdr = data->header;
-	struct inode *inode = hdr->inode;
-
-	dprintk("%s Reset task for i/o through\n", __func__);
-	data->ds_clp     = NULL;
-	data->write_done_cb = nfs4_write_done_cb;
-	data->args.fh       = NFS_FH(inode);
-	data->args.bitmask  = data->res.server->cache_consistency_bitmask;
-	data->args.offset   = data->mds_offset;
-	data->res.fattr     = &data->fattr;
-	task->tk_ops        = hdr->mds_ops;
-	rpc_task_reset_client(task, NFS_CLIENT(inode));
-}
-EXPORT_SYMBOL_GPL(nfs4_reset_write);
 
 static
 bool nfs4_write_need_cache_consistency_data(const struct nfs_write_data *data)

@@ -67,9 +67,6 @@ struct nfs4_pnfs_ds {
 #define NFS4DS_CONNECTING	0	/* ds is establishing connection */
 };
 
-/* nfs4_file_layout_dsaddr flags */
-#define NFS4_DEVICE_ID_NEG_ENTRY	0x00000001
-
 struct nfs4_file_layout_dsaddr {
 	struct nfs4_deviceid_node	id_node;
 	unsigned long			flags;
@@ -116,11 +113,25 @@ FILELAYOUT_DEVID_NODE(struct pnfs_layout_segment *lseg)
 	return &FILELAYOUT_LSEG(lseg)->dsaddr->id_node;
 }
 
+static inline void
+filelayout_mark_devid_invalid(struct nfs4_deviceid_node *node)
+{
+	u32 *p = (u32 *)&node->deviceid;
+
+	printk(KERN_WARNING "NFS: Deviceid [%x%x%x%x] marked out of use.\n",
+		p[0], p[1], p[2], p[3]);
+
+	set_bit(NFS_DEVICEID_INVALID, &node->flags);
+}
+
 static inline bool
 filelayout_test_devid_invalid(struct nfs4_deviceid_node *node)
 {
 	return test_bit(NFS_DEVICEID_INVALID, &node->flags);
 }
+
+extern bool
+filelayout_test_devid_unavailable(struct nfs4_deviceid_node *node);
 
 extern struct nfs_fh *
 nfs4_fl_select_ds_fh(struct pnfs_layout_segment *lseg, u32 j);

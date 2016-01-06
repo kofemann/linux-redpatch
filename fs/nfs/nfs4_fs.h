@@ -290,6 +290,7 @@ extern int nfs4_setup_sequence(const struct nfs_server *server,
 extern int nfs41_setup_sequence(struct nfs4_session *session,
 		struct nfs4_sequence_args *args, struct nfs4_sequence_res *res,
 		struct rpc_task *task);
+extern int nfs41_sequence_done(struct rpc_task *, struct nfs4_sequence_res *);
 extern void nfs4_destroy_session(struct nfs4_session *session);
 extern struct nfs4_session *nfs4_alloc_session(struct nfs_client *clp);
 extern int nfs4_proc_create_session(struct nfs_client *);

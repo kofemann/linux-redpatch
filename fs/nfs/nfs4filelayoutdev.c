@@ -797,21 +797,6 @@ nfs4_fl_select_ds_fh(struct pnfs_layout_segment *lseg, u32 j)
 	return flseg->fh_array[i];
 }
 
-static void
-filelayout_mark_devid_negative(struct nfs4_file_layout_dsaddr *dsaddr,
-			       int err, const char *ds_remotestr)
-{
-	u32 *p = (u32 *)&dsaddr->id_node.deviceid;
-
-	printk(KERN_ERR "NFS: data server %s connection error %d."
-		" Deviceid [%x%x%x%x] marked out of use.\n",
-		ds_remotestr, err, p[0], p[1], p[2], p[3]);
-
-	spin_lock(&nfs4_ds_cache_lock);
-	dsaddr->flags |= NFS4_DEVICE_ID_NEG_ENTRY;
-	spin_unlock(&nfs4_ds_cache_lock);
-}
-
 static void nfs4_wait_ds_connect(struct nfs4_pnfs_ds *ds)
 {
 	might_sleep();
@@ -833,22 +818,18 @@ nfs4_fl_prepare_ds(struct pnfs_layout_segment *lseg, u32 ds_idx)
 {
 	struct nfs4_file_layout_dsaddr *dsaddr = FILELAYOUT_LSEG(lseg)->dsaddr;
 	struct nfs4_pnfs_ds *ds = dsaddr->ds_list[ds_idx];
+	struct nfs4_deviceid_node *devid = FILELAYOUT_DEVID_NODE(lseg);
 	struct nfs4_pnfs_ds *ret = ds;
-
-	if (dsaddr->flags & NFS4_DEVICE_ID_NEG_ENTRY) {
-		/* Already tried to connect, don't try again */
-		dprintk("%s Deviceid marked out of use\n", __func__);
-		return NULL;
-	}
 
 	if (ds == NULL) {
 		printk(KERN_ERR "NFS: %s: No data server for offset index %d\n",
 			__func__, ds_idx);
+		filelayout_mark_devid_invalid(devid);
 		return NULL;
 	}
 	smp_rmb();
 	if (ds->ds_clp)
-		goto out;
+		goto out_test_devid;
 
 	if (test_and_set_bit(NFS4DS_CONNECTING, &ds->ds_state) == 0) {
 		struct nfs_server *s = NFS_SERVER(lseg->pls_layout->plh_inode);
@@ -856,18 +837,15 @@ nfs4_fl_prepare_ds(struct pnfs_layout_segment *lseg, u32 ds_idx)
 
 		err = nfs4_ds_connect(s, ds);
 		if (err)
-			filelayout_mark_devid_negative(dsaddr, err,
-						       ds->ds_remotestr);
+			nfs4_mark_deviceid_unavailable(devid);
 		nfs4_clear_ds_conn_bit(ds);
 	} else {
 		/* Either ds is connected, or ds is NULL */
 		nfs4_wait_ds_connect(ds);
 	}
 
-	if (dsaddr->flags & NFS4_DEVICE_ID_NEG_ENTRY) {
-		dprintk("%s Deviceid marked out of use\n", __func__);
+out_test_devid:
+	if (filelayout_test_devid_unavailable(devid))
 		return NULL;
-	}
-out:
 	return ret;
 }
