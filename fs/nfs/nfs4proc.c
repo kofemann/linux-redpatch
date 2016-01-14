@@ -422,17 +422,12 @@ void nfs4_check_drain_bc_complete(struct nfs4_slot_table *tbl)
 static void nfs41_sequence_free_slot(struct nfs4_sequence_res *res)
 {
 	struct nfs4_slot_table *tbl;
+	struct nfs4_slot *slot = res->sr_slot;
 
 	tbl = &res->sr_session->fc_slot_table;
-	if (!res->sr_slot) {
-		/* just wake up the next guy waiting since
-		 * we may have not consumed a slot after all */
-		dprintk("%s: No slot\n", __func__);
-		return;
-	}
 
 	spin_lock(&tbl->slot_tbl_lock);
-	nfs4_free_slot(tbl, res->sr_slot);
+	nfs4_free_slot(tbl, slot);
 	nfs4_check_drain_fc_complete(tbl);
 	spin_unlock(&tbl->slot_tbl_lock);
 	res->sr_slot = NULL;
@@ -442,15 +437,15 @@ int nfs41_sequence_done(struct rpc_task *task, struct nfs4_sequence_res *res)
 {
 	unsigned long timestamp;
 	struct nfs_client *clp;
-	struct nfs4_slot *slot;
+	struct nfs4_slot *slot = res->sr_slot;
 	bool interrupted = false;
 	int ret = 1;
 
+	if (slot == NULL)
+		goto out_noaction;
 	/* don't increment the sequence number if the task wasn't sent */
 	if (!RPC_WAS_SENT(task))
 		goto out;
-
-	slot = res->sr_slot;
 
 	if (slot->interrupted) {
 		slot->interrupted = 0;
@@ -522,6 +517,7 @@ out:
 	/* The session may be reset by one of the error handlers. */
 	dprintk("%s: Error %d free the slot \n", __func__, res->sr_status);
 	nfs41_sequence_free_slot(res);
+out_noaction:
 	return ret;
 retry_nowait:
 	if (rpc_restart_call_prepare(task)) {
