@@ -220,9 +220,15 @@ nfs4_put_deviceid_node(struct nfs4_deviceid_node *d)
 EXPORT_SYMBOL_GPL(nfs4_put_deviceid_node);
 
 void
-nfs4_mark_deviceid_unavailable(struct nfs4_deviceid_node *node)
+nfs4_mark_deviceid_unavailable(struct nfs4_deviceid_node *nodei, int reason)
 {
+	u32 *p = (u32 *)&node->deviceid;
+
 	node->timestamp_unavailable = jiffies;
+
+	printk(KERN_INFO "NFS: %s: deviceid:  [%x%x%x%x], reason: %d", __func__,
+		p[0], p[1], p[2], p[3], reason);
+
 	set_bit(NFS_DEVICEID_UNAVAILABLE, &node->flags);
 }
 EXPORT_SYMBOL_GPL(nfs4_mark_deviceid_unavailable);

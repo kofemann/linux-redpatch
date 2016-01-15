@@ -245,7 +245,7 @@ void nfs4_init_deviceid_node(struct nfs4_deviceid_node *,
 			     const struct nfs4_deviceid *);
 struct nfs4_deviceid_node *nfs4_insert_deviceid_node(struct nfs4_deviceid_node *);
 bool nfs4_put_deviceid_node(struct nfs4_deviceid_node *);
-void nfs4_mark_deviceid_unavailable(struct nfs4_deviceid_node *node);
+void nfs4_mark_deviceid_unavailable(struct nfs4_deviceid_node *node, int reason);
 bool nfs4_test_deviceid_unavailable(struct nfs4_deviceid_node *node);
 void nfs4_deviceid_purge_client(const struct nfs_client *);
 

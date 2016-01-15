@@ -837,7 +837,7 @@ nfs4_fl_prepare_ds(struct pnfs_layout_segment *lseg, u32 ds_idx)
 
 		err = nfs4_ds_connect(s, ds);
 		if (err)
-			nfs4_mark_deviceid_unavailable(devid);
+			nfs4_mark_deviceid_unavailable(devid, err);
 		nfs4_clear_ds_conn_bit(ds);
 	} else {
 		/* Either ds is connected, or ds is NULL */

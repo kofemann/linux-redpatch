@@ -181,7 +181,7 @@ static int filelayout_async_handle_error(struct rpc_task *task,
 	case -EIO:
 	case -ETIMEDOUT:
 	case -EPIPE:
-		nfs4_mark_deviceid_unavailable(devid);
+		nfs4_mark_deviceid_unavailable(devid, task->tk_status);
 		rpc_wake_up(&tbl->slot_tbl_waitq);
 	default:
 		printk(KERN_INFO "NFS: %s: DS %pISpc [%x%x%x%x] error. Retry through MDS %d\n", __func__,
