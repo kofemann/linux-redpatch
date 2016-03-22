@@ -603,14 +603,12 @@ cleanup_match(struct ip6t_entry_match *m, unsigned int *i)
 }
 
 static int
-check_entry(struct ip6t_entry *e, const char *name)
+check_entry(struct ip6t_entry *e)
 {
 	struct ip6t_entry_target *t;
 
-	if (!ip6_checkentry(&e->ipv6)) {
-		duprintf("ip_tables: ip check failed %p %s.\n", e, name);
+	if (!ip6_checkentry(&e->ipv6))
 		return -EINVAL;
-	}
 
 	if (e->target_offset + sizeof(struct ip6t_entry_target) >
 	    e->next_offset)
@@ -703,10 +701,6 @@ find_check_entry(struct ip6t_entry *e, const char *name, unsigned int size,
 	unsigned int j;
 	struct xt_mtchk_param mtpar;
 
-	ret = check_entry(e, name);
-	if (ret)
-		return ret;
-
 	j = 0;
 	mtpar.table     = name;
 	mtpar.entryinfo = &e->ipv6;
@@ -767,6 +761,7 @@ check_entry_size_and_hooks(struct ip6t_entry *e,
 			   unsigned int *i)
 {
 	unsigned int h;
+	int err;
 
 	if ((unsigned long)e % __alignof__(struct ip6t_entry) != 0
 	    || (unsigned char *)e + sizeof(struct ip6t_entry) >= limit) {
@@ -780,6 +775,13 @@ check_entry_size_and_hooks(struct ip6t_entry *e,
 			 e, e->next_offset);
 		return -EINVAL;
 	}
+
+	err = check_entry(e);
+	if (err)
+		return err;
+
+	if (e->target_offset < e->elems - (unsigned char *)e)
+		return -EINVAL;
 
 	/* Check hooks & underflows */
 	for (h = 0; h < NF_INET_NUMHOOKS; h++) {
@@ -1595,6 +1597,9 @@ check_compat_entry_size_and_hooks(struct compat_ip6t_entry *e,
 		return -EINVAL;
 	}
 
+	if (e->target_offset < e->elems - (unsigned char *)e)
+		return -EINVAL;
+
 	if (e->next_offset < sizeof(struct compat_ip6t_entry) +
 			     sizeof(struct compat_xt_entry_target)) {
 		duprintf("checking: element %p size %u\n",
@@ -1603,7 +1608,7 @@ check_compat_entry_size_and_hooks(struct compat_ip6t_entry *e,
 	}
 
 	/* For purposes of check_entry casting the compat entry is fine */
-	ret = check_entry((struct ip6t_entry *)e, name);
+	ret = check_entry((struct ip6t_entry *)e);
 	if (ret)
 		return ret;
 
