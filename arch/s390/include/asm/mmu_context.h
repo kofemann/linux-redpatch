@@ -16,17 +16,33 @@
 static inline int init_new_context(struct task_struct *tsk,
 				   struct mm_struct *mm)
 {
-	spin_lock_init(&mm->context.list_lock);
-	INIT_LIST_HEAD(&mm->context.pgtable_list);
-	INIT_LIST_HEAD(&mm->context.gmap_list);
-	cpumask_clear(&mm->context.cpu_attach_mask);
 	atomic_set(&mm->context.attach_count, 0);
 	mm->context.flush_mm = 0;
-#ifdef CONFIG_PGSTE
-	mm->context.alloc_pgste = page_table_allocate_pgste;
-	mm->context.has_pgste = 0;
-	mm->context.use_skey = 0;
+	switch (mm->context.asce_limit) {
+	case 1UL << 42:
+		/*
+		 * forked 3-level task, fall through to set new asce with new
+		 * mm->pgd
+		 */
+	case 0:
+		/* context created by exec, set asce limit to 4TB */
+		mm->context.asce = __pa(mm->pgd) | _ASCE_TABLE_LENGTH |
+				   _ASCE_USER_BITS;
+#ifdef CONFIG_64BIT
+		mm->context.asce |= _ASCE_TYPE_REGION3;
 #endif
+		mm->context.asce_limit = STACK_TOP_MAX;
+		break;
+	case 1UL << 53:
+		/* forked 4-level task, set new asce with new mm->pgd */
+		mm->context.asce = __pa(mm->pgd) | _ASCE_TABLE_LENGTH |
+				   _ASCE_USER_BITS | _ASCE_TYPE_REGION2;
+		break;
+	case 1UL << 31:
+		/* forked 2-level compat task, set new asce with new mm->pgd */
+		mm->context.asce = __pa(mm->pgd) | _ASCE_TABLE_LENGTH |
+				   _ASCE_USER_BITS | _ASCE_TYPE_SEGMENT;
+	}
 	if (current->mm->context.alloc_pgste) {
 		/*
 		 * alloc_pgste indicates, that any NEW context will be created
@@ -47,14 +63,6 @@ static inline int init_new_context(struct task_struct *tsk,
 		mm->context.has_pgste = 0;
 		mm->context.alloc_pgste = 0;
 	}
-	if (mm->context.asce_limit == 0) {
-		/* context created by exec, set asce limit to 4TB */
-		mm->context.asce_bits = _ASCE_TABLE_LENGTH |
-			_ASCE_USER_BITS | _ASCE_TYPE_REGION3;
-		mm->context.asce_limit = STACK_TOP_MAX;
-	} else if (mm->context.asce_limit == (1UL << 31)) {
-		mm_inc_nr_pmds(mm);
-	}
 	crst_table_init((unsigned long *) mm->pgd, pgd_entry_type(mm));
 	return 0;
 }
@@ -69,13 +77,15 @@ static inline int init_new_context(struct task_struct *tsk,
 
 static inline void update_mm(struct mm_struct *mm, struct task_struct *tsk)
 {
-	pgd_t *pgd = mm->pgd;
+	unsigned long exec_asce;
 
-	S390_lowcore.user_asce = mm->context.asce_bits | __pa(pgd);
+	S390_lowcore.user_asce = mm->context.asce;
 	if (user_mode != HOME_SPACE_MODE) {
 		/* Load primary space page table origin. */
-		pgd = mm->context.noexec ? get_shadow_table(pgd) : pgd;
-		S390_lowcore.user_exec_asce = mm->context.asce_bits | __pa(pgd);
+		exec_asce = (unsigned long)
+			    get_shadow_table((void *) mm->context.asce);
+		S390_lowcore.user_exec_asce = mm->context.noexec ? exec_asce :
+					      mm->context.asce;
 		asm volatile(LCTL_OPCODE" 1,1,%0\n"
 			     : : "m" (S390_lowcore.user_exec_asce) );
 	} else
