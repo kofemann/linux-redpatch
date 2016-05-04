@@ -50,7 +50,11 @@ static int anon_inodefs_delete_dentry(struct dentry *dentry)
  */
 static char *anon_inodefs_dname(struct dentry *dentry, char *buffer, int buflen)
 {
-	return dynamic_dname(dentry, buffer, buflen, "anon_inode:%s",
+	/*
+ 	 * RHEL6 only: we don't use 'anon_inode:' prefix to preserve
+ 	 * the string format used since GA.
+ 	 */
+	return dynamic_dname(dentry, buffer, buflen, "%s",
 				dentry->d_name.name);
 }
 
