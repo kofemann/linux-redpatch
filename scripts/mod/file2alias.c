@@ -797,6 +797,7 @@ static int do_mdio_entry(const char *filename,
  * complicated.
  */
 
+#if 0 /* RHEL6 */
 static int do_x86cpu_entry(const char *filename, struct x86_cpu_id *id,
 			   char *alias)
 {
@@ -813,6 +814,7 @@ static int do_x86cpu_entry(const char *filename, struct x86_cpu_id *id,
 	strcat(alias, ",*");
 	return 1;
 }
+#endif
 
 /* Ignore any prefix, eg. some architectures prepend _ */
 static inline int sym_is(const char *symbol, const char *name)
@@ -857,16 +859,16 @@ void handle_moddevtable(struct module *mod, struct elf_info *info,
 	char *zeros = NULL;
 
 	/* We're looking for a section relative symbol */
-	if (!sym->st_shndx || get_secindex(info, sym) >= info->num_sections)
+	if (!sym->st_shndx || sym->st_shndx >= info->hdr->e_shnum)
 		return;
 
 	/* Handle all-NULL symbols allocated into .bss */
-	if (info->sechdrs[get_secindex(info, sym)].sh_type & SHT_NOBITS) {
+	if (info->sechdrs[sym->st_shndx].sh_type & SHT_NOBITS) {
 		zeros = calloc(1, sym->st_size);
 		symval = zeros;
 	} else {
 		symval = (void *)info->hdr
-			+ info->sechdrs[get_secindex(info, sym)].sh_offset
+			+ info->sechdrs[sym->st_shndx].sh_offset
 			+ sym->st_value;
 	}
 

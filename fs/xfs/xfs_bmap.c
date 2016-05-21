@@ -456,7 +456,7 @@ xfs_bmap_add_extent(
 	int			logflags; /* returned value */
 	xfs_extnum_t		nextents; /* number of extents in file now */
 
-	XFS_STATS_INC(xs_add_exlist);
+	XFS_STATS_INC(ip->i_mount, xs_add_exlist);
 
 	cur = *curp;
 	ifp = XFS_IFORK_PTR(ip, whichfork);
@@ -2033,12 +2033,24 @@ xfs_bmap_extsize_align(
 		align_alen += temp;
 		align_off -= temp;
 	}
-	/*
-	 * Same adjustment for the end of the requested area.
-	 */
-	if ((temp = (align_alen % extsz))) {
+
+	/* Same adjustment for the end of the requested area. */
+	temp = (align_alen % extsz);
+	if (temp)
 		align_alen += extsz - temp;
-	}
+
+	/*
+	 * For large extent hint sizes, the aligned extent might be larger than
+	 * MAXEXTLEN. In that case, reduce the size by an extsz so that it pulls
+	 * the length back under MAXEXTLEN. The outer allocation loops handle
+	 * short allocation just fine, so it is safe to do this. We only want to
+	 * do it when we are forced to, though, because it means more allocation
+	 * operations are required.
+	 */
+	while (align_alen > MAXEXTLEN)
+		align_alen -= extsz;
+	ASSERT(align_alen <= MAXEXTLEN);
+
 	/*
 	 * If the previous block overlaps with this proposed allocation
 	 * then move the start forward without adjusting the length.
@@ -2127,7 +2139,9 @@ xfs_bmap_extsize_align(
 			return XFS_ERROR(EINVAL);
 	} else {
 		ASSERT(orig_off >= align_off);
-		ASSERT(orig_end <= align_off + align_alen);
+		/* see MAXEXTLEN handling above */
+		ASSERT(orig_end <= align_off + align_alen ||
+		       align_alen + extsz > MAXEXTLEN);
 	}
 
 #ifdef DEBUG
@@ -2832,12 +2846,12 @@ xfs_bmap_del_extent(
 	xfs_filblks_t		temp2;	/* for indirect length calculations */
 	int			state = 0;
 
-	XFS_STATS_INC(xs_del_exlist);
+	mp = ip->i_mount;
+	XFS_STATS_INC(mp, xs_del_exlist);
 
 	if (whichfork == XFS_ATTR_FORK)
 		state |= BMAP_ATTRFORK;
 
-	mp = ip->i_mount;
 	ifp = XFS_IFORK_PTR(ip, whichfork);
 	ASSERT((*idx >= 0) && (*idx < ifp->if_bytes /
 		(uint)sizeof(xfs_bmbt_rec_t)));
@@ -3489,7 +3503,7 @@ xfs_bmap_search_extents(
 	xfs_ifork_t	*ifp;		/* inode fork pointer */
 	xfs_bmbt_rec_host_t  *ep;            /* extent record pointer */
 
-	XFS_STATS_INC(xs_look_exlist);
+	XFS_STATS_INC(ip->i_mount, xs_look_exlist);
 	ifp = XFS_IFORK_PTR(ip, fork);
 
 	ep = xfs_bmap_search_multi_extents(ifp, bno, eofp, lastxp, gotp, prevp);
@@ -4614,9 +4628,9 @@ xfs_bmapi(
 	ASSERT(ifp->if_ext_max ==
 	       XFS_IFORK_SIZE(ip, whichfork) / (uint)sizeof(xfs_bmbt_rec_t));
 	if ((wr = (flags & XFS_BMAPI_WRITE)) != 0)
-		XFS_STATS_INC(xs_blk_mapw);
+		XFS_STATS_INC(mp, xs_blk_mapw);
 	else
-		XFS_STATS_INC(xs_blk_mapr);
+		XFS_STATS_INC(mp, xs_blk_mapr);
 	/*
 	 * IGSTATE flag is used to combine extents which
 	 * differ only due to the state of the extents.
@@ -4723,16 +4737,6 @@ xfs_bmapi(
 				/* Figure out the extent size, adjust alen */
 				extsz = xfs_get_extsz_hint(ip);
 				if (extsz) {
-					/*
-					 * make sure we don't exceed a single
-					 * extent length when we align the
-					 * extent by reducing length we are
-					 * going to allocate by the maximum
-					 * amount extent size aligment may
-					 * require.
-					 */
-					alen = XFS_FILBLKS_MIN(len,
-						   MAXEXTLEN - (2 * extsz - 1));
 					error = xfs_bmap_extsize_align(mp,
 							&got, &prev, extsz,
 							rt, eof,
@@ -4894,7 +4898,15 @@ xfs_bmapi(
 			error = xfs_bmap_add_extent(ip, &lastx, &cur, mval,
 				firstblock, flist, &tmp_logflags,
 				whichfork);
-			logflags |= tmp_logflags;
+			/*
+			 * Log the inode core unconditionally in the unwritten extent conversion
+			 * path because the conversion might not have done so (e.g., if the
+			 * extent count hasn't changed). We need to make sure the inode is dirty
+			 * in the transaction for the sake of fsync(), even if nothing has
+			 * changed, because fsync() will not force the log for this transaction
+			 * unless it sees the inode pinned.
+			 */
+			logflags |= tmp_logflags | XFS_ILOG_CORE;
 			if (error)
 				goto error0;
 			ep = xfs_iext_get_ext(ifp, lastx);
@@ -5021,7 +5033,7 @@ xfs_bmapi_single(
 	}
 	if (XFS_FORCED_SHUTDOWN(ip->i_mount))
 		return XFS_ERROR(EIO);
-	XFS_STATS_INC(xs_blk_mapr);
+	XFS_STATS_INC(ip->i_mount, xs_blk_mapr);
 	if (!(ifp->if_flags & XFS_IFEXTENTS) &&
 	    (error = xfs_iread_extents(tp, ip, whichfork)))
 		return error;
@@ -5109,7 +5121,7 @@ xfs_bunmapi(
 		*done = 1;
 		return 0;
 	}
-	XFS_STATS_INC(xs_blk_unmap);
+	XFS_STATS_INC(mp, xs_blk_unmap);
 	isrt = (whichfork == XFS_DATA_FORK) && XFS_IS_REALTIME_INODE(ip);
 	start = bno;
 	bno = start + len - 1;

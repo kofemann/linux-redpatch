@@ -553,6 +553,22 @@ hrtimer_force_reprogram(struct hrtimer_cpu_base *cpu_base, int skip_equal)
 		tick_program_event(cpu_base->expires_next, 1);
 }
 
+static int force_hrtimer_reprogram;
+static __init int setup_force_hrtimer_reprogram(char *arg)
+{
+	int num;
+
+	get_option(&arg, &num);
+	if (num <= 0)
+		return 0;
+
+	force_hrtimer_reprogram = 1;
+	if (force_hrtimer_reprogram)
+		pr_info("hrtimer: expired timers will be forcibly reprogrammed.");
+	return 1;
+}
+__setup("force_hrtimer_reprogram=", setup_force_hrtimer_reprogram);
+
 /*
  * Shared reprogramming for clock_realtime and clock_monotonic
  *
@@ -605,7 +621,7 @@ static int hrtimer_reprogram(struct hrtimer *timer,
 	/*
 	 * Clockevents returns -ETIME, when the event was in the past.
 	 */
-	res = tick_program_event(expires, 0);
+	res = tick_program_event(expires, force_hrtimer_reprogram);
 	if (!IS_ERR_VALUE(res))
 		cpu_base->expires_next = expires;
 	return res;
@@ -677,7 +693,7 @@ static inline ktime_t hrtimer_update_base(struct hrtimer_cpu_base *base)
 {
 	ktime_t *offs_real = &base->clock_base[CLOCK_REALTIME].offset;
 
-	return ktime_get_update_offsets(offs_real);
+	return ktime_get_update_offsets(&base->clock_was_set, offs_real);
 }
 
 static void clock_was_set_work(struct work_struct *work)
