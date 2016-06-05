@@ -29,6 +29,7 @@
  */
 
 #include <linux/nfs_fs.h>
+#include <linux/nfs_mount.h>
 #include <linux/vmalloc.h>
 
 #include "internal.h"
@@ -165,6 +166,7 @@ nfs4_ds_connect(struct nfs_server *mds_srv, struct nfs4_pnfs_ds *ds)
 			__func__, ds->ds_remotestr, da->da_remotestr);
 
 		clp = nfs4_set_ds_client(mds_srv->nfs_client,
+				 mds_srv->flags & NFS_MOUNT_NORESVPORT ? 1 : 0,
 				 (struct sockaddr *)&da->da_addr,
 				 da->da_addrlen, IPPROTO_TCP);
 		if (!IS_ERR(clp))

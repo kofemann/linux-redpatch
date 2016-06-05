@@ -1449,7 +1449,7 @@ error:
  * low timeout interval so that if a connection is lost, we retry through
  * the MDS.
  */
-struct nfs_client *nfs4_set_ds_client(struct nfs_client* mds_clp,
+struct nfs_client *nfs4_set_ds_client(struct nfs_client* mds_clp, int noresvport,
 		const struct sockaddr *ds_addr,
 		int ds_addrlen, int ds_proto)
 {
@@ -1470,7 +1470,7 @@ struct nfs_client *nfs4_set_ds_client(struct nfs_client* mds_clp,
 	 */
 	nfs_init_timeout_values(&ds_timeout, ds_proto, dataserver_timeo, dataserver_retrans);
 	clp = nfs_get_client(&cl_init, &ds_timeout, mds_clp->cl_ipaddr,
-			     mds_clp->cl_rpcclient->cl_auth->au_flavor, 0);
+			     mds_clp->cl_rpcclient->cl_auth->au_flavor, noresvport);
 
 	dprintk("<-- %s %p\n", __func__, clp);
 	return clp;

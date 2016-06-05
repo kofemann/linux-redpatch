@@ -164,6 +164,7 @@ extern struct nfs_server *nfs_clone_server(struct nfs_server *,
 extern void nfs_mark_client_ready(struct nfs_client *clp, int state);
 extern int nfs4_check_client_ready(struct nfs_client *clp);
 extern struct nfs_client *nfs4_set_ds_client(struct nfs_client* mds_clp,
+					     int noresvport,
 					     const struct sockaddr *ds_addr,
 					     int ds_addrlen, int ds_proto);
 #ifdef CONFIG_PROC_FS
