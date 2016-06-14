@@ -40,21 +40,6 @@ struct gfs2_inum_range_host {
 	u64 ir_length;
 };
 
-struct inode *gfs2_ilookup(struct super_block *sb, u64 no_addr)
-{
-	struct inode *inode;
-
-repeat:
-	inode = ilookup(sb, no_addr);
-	if (!inode)
-		return inode;
-	if (is_bad_inode(inode)) {
-		iput(inode);
-		goto repeat;
-	}
-	return inode;
-}
-
 static struct inode *gfs2_iget(struct super_block *sb, u64 no_addr)
 {
 	struct inode *inode;
