@@ -840,7 +840,7 @@ static int gfs2_make_fs_ro(struct gfs2_sbd *sdp)
 
 	clear_bit(SDF_JOURNAL_LIVE, &sdp->sd_flags);
 
-	if (t_gh.gh_gl)
+	if (gfs2_holder_initialized(&t_gh))
 		gfs2_glock_dq_uninit(&t_gh);
 
 	gfs2_quota_cleanup(sdp);
@@ -1031,9 +1031,11 @@ static int gfs2_statfs_slow(struct gfs2_sbd *sdp, struct gfs2_statfs_change_host
 	int error = 0, err;
 
 	memset(sc, 0, sizeof(struct gfs2_statfs_change_host));
-	gha = kcalloc(slots, sizeof(struct gfs2_holder), GFP_KERNEL);
+	gha = kmalloc(slots * sizeof(struct gfs2_holder), GFP_KERNEL);
 	if (!gha)
 		return -ENOMEM;
+	for (x = 0; x < slots; x++)
+		gfs2_holder_mark_uninitialized(gha + x);
 
 	rgd_next = gfs2_rgrpd_get_first(sdp);
 
@@ -1043,7 +1045,7 @@ static int gfs2_statfs_slow(struct gfs2_sbd *sdp, struct gfs2_statfs_change_host
 		for (x = 0; x < slots; x++) {
 			gh = gha + x;
 
-			if (gh->gh_gl && gfs2_glock_poll(gh)) {
+			if (gfs2_holder_initialized(gh) && gfs2_glock_poll(gh)) {
 				err = gfs2_glock_wait(gh);
 				if (err) {
 					gfs2_holder_uninit(gh);
@@ -1056,7 +1058,7 @@ static int gfs2_statfs_slow(struct gfs2_sbd *sdp, struct gfs2_statfs_change_host
 				}
 			}
 
-			if (gh->gh_gl)
+			if (gfs2_holder_initialized(gh))
 				done = 0;
 			else if (rgd_next && !error) {
 				error = gfs2_glock_nq_init(rgd_next->rd_gl,
@@ -1251,9 +1253,11 @@ static void gfs2_drop_inode(struct inode *inode)
 {
 	struct gfs2_inode *ip = GFS2_I(inode);
 
-	if (!test_bit(GIF_FREE_VFS_INODE, &ip->i_flags) && inode->i_nlink) {
+	if (!test_bit(GIF_FREE_VFS_INODE, &ip->i_flags) &&
+	    inode->i_nlink &&
+	    gfs2_holder_initialized(&ip->i_iopen_gh)) {
 		struct gfs2_glock *gl = ip->i_iopen_gh.gh_gl;
-		if (gl && test_bit(GLF_DEMOTE, &gl->gl_flags))
+		if (test_bit(GLF_DEMOTE, &gl->gl_flags))
 			clear_nlink(inode);
 	}
 	generic_drop_inode(inode);
@@ -1280,7 +1284,7 @@ static void gfs2_clear_inode(struct inode *inode)
 	gfs2_glock_add_to_lru(ip->i_gl);
 	gfs2_glock_put(ip->i_gl);
 	ip->i_gl = NULL;
-	if (ip->i_iopen_gh.gh_gl) {
+	if (gfs2_holder_initialized(&ip->i_iopen_gh)) {
 		ip->i_iopen_gh.gh_gl->gl_object = NULL;
 		ip->i_iopen_gh.gh_flags |= GL_NOCACHE;
 		gfs2_glock_dq_wait(&ip->i_iopen_gh);
@@ -1524,7 +1528,7 @@ static void gfs2_delete_inode(struct inode *inode)
 			goto out_truncate;
 	}
 
-	if (ip->i_iopen_gh.gh_gl &&
+	if (gfs2_holder_initialized(&ip->i_iopen_gh) &&
 	    test_bit(HIF_HOLDER, &ip->i_iopen_gh.gh_iflags)) {
 		ip->i_iopen_gh.gh_flags |= GL_NOCACHE;
 		gfs2_glock_dq_wait(&ip->i_iopen_gh);
@@ -1603,7 +1607,7 @@ out_unlock:
 	if (gfs2_rs_active(&ip->i_res))
 		gfs2_rs_deltree(&ip->i_res);
 
-	if (ip->i_iopen_gh.gh_gl) {
+	if (gfs2_holder_initialized(&ip->i_iopen_gh)) {
 		if (test_bit(HIF_HOLDER, &ip->i_iopen_gh.gh_iflags)) {
 			ip->i_iopen_gh.gh_flags |= GL_NOCACHE;
 			gfs2_glock_dq_wait(&ip->i_iopen_gh);

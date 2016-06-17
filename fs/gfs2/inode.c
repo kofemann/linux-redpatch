@@ -130,9 +130,9 @@ struct inode *gfs2_inode_lookup(struct super_block *sb, unsigned int type,
 	struct gfs2_inode *ip;
 	struct gfs2_glock *io_gl = NULL;
 	struct gfs2_holder i_gh;
-	bool unlock = false;
 	int error;
 
+	gfs2_holder_mark_uninitialized(&i_gh);
 	inode = gfs2_iget(sb, no_addr);
 	ip = GFS2_I(inode);
 
@@ -164,7 +164,6 @@ struct inode *gfs2_inode_lookup(struct super_block *sb, unsigned int type,
 						   GL_SKIP, &i_gh);
 			if (error)
 				goto fail_put;
-			unlock = true;
 
 			if (blktype != GFS2_BLKST_FREE) {
 				error = gfs2_check_blk_type(sdp, no_addr,
@@ -195,7 +194,7 @@ struct inode *gfs2_inode_lookup(struct super_block *sb, unsigned int type,
 		unlock_new_inode(inode);
 	}
 
-	if (unlock)
+	if (gfs2_holder_initialized(&i_gh))
 		gfs2_glock_dq_uninit(&i_gh);
 	return inode;
 
@@ -207,7 +206,7 @@ fail_refresh:
 fail_put:
 	if (io_gl)
 		gfs2_glock_put(io_gl);
-	if (unlock)
+	if (gfs2_holder_initialized(&i_gh))
 		gfs2_glock_dq_uninit(&i_gh);
 	ip->i_gl->gl_object = NULL;
 fail:
@@ -393,8 +392,8 @@ struct inode *gfs2_lookupi(struct inode *dir, const struct qstr *name,
 	struct gfs2_holder d_gh;
 	int error = 0;
 	struct inode *inode = NULL;
-	int unlock = 0;
 
+	gfs2_holder_mark_uninitialized(&d_gh);
 	if (!name->len || name->len > GFS2_FNAMESIZE)
 		return ERR_PTR(-ENAMETOOLONG);
 
@@ -409,7 +408,6 @@ struct inode *gfs2_lookupi(struct inode *dir, const struct qstr *name,
 		error = gfs2_glock_nq_init(dip->i_gl, LM_ST_SHARED, 0, &d_gh);
 		if (error)
 			return ERR_PTR(error);
-		unlock = 1;
 	}
 
 	if (!is_root) {
@@ -422,7 +420,7 @@ struct inode *gfs2_lookupi(struct inode *dir, const struct qstr *name,
 	if (IS_ERR(inode))
 		error = PTR_ERR(inode);
 out:
-	if (unlock)
+	if (gfs2_holder_initialized(&d_gh))
 		gfs2_glock_dq_uninit(&d_gh);
 	if (error == -ENOENT)
 		return NULL;
