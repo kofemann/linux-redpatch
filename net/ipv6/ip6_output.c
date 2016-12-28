@@ -1248,7 +1248,7 @@ int ip6_append_data(struct sock *sk, int getfrag(void *from, char *to,
 
 	skb = skb_peek_tail(&sk->sk_write_queue);
 	inet->cork.length += length;
-	if (((length > mtu) ||
+	if ((((length + fragheaderlen) > mtu) ||
 	     (skb && skb_is_gso(skb))) &&
 	    (sk->sk_protocol == IPPROTO_UDP) &&
 	    (rt->u.dst.dev->features & NETIF_F_UFO)) {
