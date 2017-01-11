@@ -31,6 +31,9 @@
 #include <linux/delay.h>
 #include <linux/hyperv.h>
 
+#include <asm/hyperv.h>
+#include <linux/interrupt.h>
+
 #include "hyperv_vmbus.h"
 
 static void init_vp_index(struct vmbus_channel *channel,
@@ -440,35 +443,55 @@ static void init_vp_index(struct vmbus_channel *channel, const uuid_le *type_gui
 
 static void vmbus_wait_for_unload(void)
 {
-	int cpu = smp_processor_id();
-	void *page_addr = hv_context.synic_message_page[cpu];
-	struct hv_message *msg = (struct hv_message *)page_addr +
-				  VMBUS_MESSAGE_SINT;
+	int cpu;
+	void *page_addr;
+	struct hv_message *msg;
 	struct vmbus_channel_message_header *hdr;
-	bool unloaded = false;
+	u32 message_type;
 
+	/*
+	 * CHANNELMSG_UNLOAD_RESPONSE is always delivered to the CPU which was
+	 * used for initial contact or to CPU0 depending on host version. When
+	 * we're crashing on a different CPU let's hope that IRQ handler on
+	 * the cpu which receives CHANNELMSG_UNLOAD_RESPONSE is still
+	 * functional and vmbus_unload_response() will complete
+	 * vmbus_connection.unload_event. If not, the last thing we can do is
+	 * read message pages for all CPUs directly.
+	 */
 	while (1) {
-		if (msg->header.message_type == HVMSG_NONE) {
-			mdelay(10);
-			continue;
+		if (completion_done(&vmbus_connection.unload_event))
+			break;
+
+		for_each_online_cpu(cpu) {
+			page_addr = hv_context.synic_message_page[cpu];
+			msg = (struct hv_message *)page_addr +
+				VMBUS_MESSAGE_SINT;
+
+			message_type = READ_ONCE(msg->header.message_type);
+			if (message_type == HVMSG_NONE)
+				continue;
+
+			hdr = (struct vmbus_channel_message_header *)
+				msg->u.payload;
+
+			if (hdr->msgtype == CHANNELMSG_UNLOAD_RESPONSE)
+				complete(&vmbus_connection.unload_event);
+
+			vmbus_signal_eom(msg, message_type);
 		}
 
-		hdr = (struct vmbus_channel_message_header *)msg->u.payload;
-		if (hdr->msgtype == CHANNELMSG_UNLOAD_RESPONSE)
-			unloaded = true;
+		mdelay(10);
+	}
 
+	/*
+	 * We're crashing and already got the UNLOAD_RESPONSE, cleanup all
+	 * maybe-pending messages on all CPUs to be able to receive new
+	 * messages after we reconnect.
+	 */
+	for_each_online_cpu(cpu) {
+		page_addr = hv_context.synic_message_page[cpu];
+		msg = (struct hv_message *)page_addr + VMBUS_MESSAGE_SINT;
 		msg->header.message_type = HVMSG_NONE;
-		/*
-		 * header.message_type needs to be written before we do
-		 * wrmsrl() below.
-		 */
-		mb();
-
-		if (msg->header.message_flags.msg_pending)
-			wrmsrl(HV_X64_MSR_EOM, 0);
-
-		if (unloaded)
-			break;
 	}
 }
 
@@ -484,7 +507,7 @@ static void vmbus_unload_response(struct vmbus_channel_message_header *hdr)
 	complete(&vmbus_connection.unload_event);
 }
 
-void vmbus_initiate_unload(void)
+void vmbus_initiate_unload(bool crash)
 {
 	struct vmbus_channel_message_header hdr;
 
@@ -501,7 +524,7 @@ void vmbus_initiate_unload(void)
 	 * vmbus_initiate_unload() is also called on crash and the crash can be
 	 * happening in an interrupt context, where scheduling is impossible.
 	 */
-	if (!in_interrupt())
+	if (!crash)
 		wait_for_completion(&vmbus_connection.unload_event);
 	else
 		vmbus_wait_for_unload();
