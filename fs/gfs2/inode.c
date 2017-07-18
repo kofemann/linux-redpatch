@@ -855,6 +855,7 @@ int gfs2_create_inode(struct inode *dir, struct dentry *dentry,
 	return 0;
 
 fail_gunlock3:
+	glock_clear_object(io_gl, ip);
 	gfs2_glock_dq_uninit(&ip->i_iopen_gh);
 	gfs2_glock_put(io_gl);
 fail_gunlock2:
