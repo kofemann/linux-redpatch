@@ -204,15 +204,15 @@ struct inode *gfs2_inode_lookup(struct super_block *sb, unsigned int type,
 
 fail_refresh:
 	ip->i_iopen_gh.gh_flags |= GL_NOCACHE;
-	ip->i_iopen_gh.gh_gl->gl_object = NULL;
+	glock_clear_object(ip->i_iopen_gh.gh_gl, ip);
 	gfs2_glock_dq_wait(&ip->i_iopen_gh);
 	gfs2_holder_uninit(&ip->i_iopen_gh);
 fail_put:
 	if (io_gl)
 		gfs2_glock_put(io_gl);
+	glock_clear_object(ip->i_gl, ip);
 	if (gfs2_holder_initialized(&i_gh))
 		gfs2_glock_dq_uninit(&i_gh);
-	ip->i_gl->gl_object = NULL;
 fail:
 	iget_failed(inode);
 	return ERR_PTR(error);
@@ -861,6 +861,7 @@ fail_gunlock2:
 	if (io_gl)
 		clear_bit(GLF_INODE_CREATING, &io_gl->gl_flags);
 
+	glock_clear_object(ip->i_gl, ip);
 	gfs2_glock_dq_uninit(ghs + 1);
 fail_free_inode:
 	if (ip->i_gl)
