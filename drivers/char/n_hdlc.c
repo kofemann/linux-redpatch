@@ -152,7 +152,6 @@ struct n_hdlc {
 	int			tbusy;
 	int			woke_up;
 	struct n_hdlc_buf	*tbuf;
-	spinlock_t		tbuf_lock;
 	struct n_hdlc_buf_list	tx_buf_list;
 	struct n_hdlc_buf_list	rx_buf_list;
 	struct n_hdlc_buf_list	tx_free_buf_list;
@@ -195,10 +194,10 @@ static void n_hdlc_tty_receive(struct tty_struct *tty, const __u8 *cp,
 static void n_hdlc_tty_wakeup(struct tty_struct *tty);
 
 #define bset(p,b)	((p)[(b) >> 5] |= (1 << ((b) & 0x1f)))
+
 #define tty2n_hdlc(tty)	((struct n_hdlc *) ((tty)->disc_data))
 #define n_hdlc2tty(n_hdlc)	((n_hdlc)->tty)
-static struct n_hdlc_buf* n_hdlc_get_current(struct n_hdlc *n_hdlc);
-static void n_hdlc_set_current(struct n_hdlc *n_hdlc, struct n_hdlc_buf *cur);
+
 static void flush_rx_queue(struct tty_struct *tty)
 {
 	struct n_hdlc *n_hdlc = tty2n_hdlc(tty);
@@ -212,13 +211,16 @@ static void flush_tx_queue(struct tty_struct *tty)
 {
 	struct n_hdlc *n_hdlc = tty2n_hdlc(tty);
 	struct n_hdlc_buf *buf;
+	unsigned long flags;
 
 	while ((buf = n_hdlc_buf_get(&n_hdlc->tx_buf_list)))
 		n_hdlc_buf_put(&n_hdlc->tx_free_buf_list, buf);
-
-	buf = n_hdlc_get_current(n_hdlc);
-	if (buf)
-		n_hdlc_buf_put(&n_hdlc->tx_free_buf_list, buf);
+ 	spin_lock_irqsave(&n_hdlc->tx_buf_list.spinlock, flags);
+	if (n_hdlc->tbuf) {
+		n_hdlc_buf_put(&n_hdlc->tx_free_buf_list, n_hdlc->tbuf);
+		n_hdlc->tbuf = NULL;
+	}
+	spin_unlock_irqrestore(&n_hdlc->tx_buf_list.spinlock, flags);
 }
 
 static struct tty_ldisc_ops n_hdlc_ldisc = {
@@ -405,8 +407,8 @@ static void n_hdlc_send_frames(struct n_hdlc *n_hdlc, struct tty_struct *tty)
 
 	/* get current transmit buffer or get new transmit */
 	/* buffer from list of pending transmit buffers */
-
-	tbuf = n_hdlc_get_current(n_hdlc);
+		
+	tbuf = n_hdlc->tbuf;
 	if (!tbuf)
 		tbuf = n_hdlc_buf_get(&n_hdlc->tx_buf_list);
 		
@@ -421,7 +423,7 @@ static void n_hdlc_send_frames(struct n_hdlc *n_hdlc, struct tty_struct *tty)
 
 		/* rollback was possible and has been done */
 		if (actual == -ERESTARTSYS) {
-			n_hdlc_set_current(n_hdlc, tbuf);
+			n_hdlc->tbuf = tbuf;
 			break;
 		}
 		/* if transmit error, throw frame away by */
@@ -437,6 +439,9 @@ static void n_hdlc_send_frames(struct n_hdlc *n_hdlc, struct tty_struct *tty)
 			/* free current transmit buffer */
 			n_hdlc_buf_put(&n_hdlc->tx_free_buf_list, tbuf);
 			
+			/* this tx buffer is done */
+			n_hdlc->tbuf = NULL;
+			
 			/* wait up sleeping writers */
 			wake_up_interruptible(&tty->write_wait);
 	
@@ -449,7 +454,7 @@ static void n_hdlc_send_frames(struct n_hdlc *n_hdlc, struct tty_struct *tty)
 					
 			/* buffer not accepted by driver */
 			/* set this buffer as pending buffer */
-			n_hdlc_set_current(n_hdlc, tbuf);
+			n_hdlc->tbuf = tbuf;
 			break;
 		}
 	}
@@ -851,7 +856,7 @@ static struct n_hdlc *n_hdlc_alloc(void)
 		return NULL;
 
 	memset(n_hdlc, 0, sizeof(*n_hdlc));
-	spin_lock_init(&n_hdlc->tbuf_lock);
+
 	n_hdlc_buf_list_init(&n_hdlc->rx_free_buf_list);
 	n_hdlc_buf_list_init(&n_hdlc->tx_free_buf_list);
 	n_hdlc_buf_list_init(&n_hdlc->rx_buf_list);
@@ -1000,26 +1005,3 @@ MODULE_AUTHOR("Paul Fulghum paulkf@microgate.com");
 module_param(debuglevel, int, 0);
 module_param(maxframe, int, 0);
 MODULE_ALIAS_LDISC(N_HDLC);
-
-static struct n_hdlc_buf* n_hdlc_get_current(struct n_hdlc *n_hdlc)
-{
-	struct n_hdlc_buf *tbuf = NULL;
-	unsigned long flags;
-
-	spin_lock_irqsave(&n_hdlc->tbuf_lock, flags);
-	tbuf = n_hdlc->tbuf;
-	n_hdlc->tbuf = NULL;
-	spin_unlock_irqrestore(&n_hdlc->tbuf_lock, flags);
-
-	return tbuf;
-}
-
-static void n_hdlc_set_current(struct n_hdlc *n_hdlc, struct n_hdlc_buf *cur)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&n_hdlc->tbuf_lock, flags);
-	WARN_ON_ONCE(n_hdlc->tbuf);
-	n_hdlc->tbuf = cur;
-	spin_unlock_irqrestore(&n_hdlc->tbuf_lock, flags);
-}

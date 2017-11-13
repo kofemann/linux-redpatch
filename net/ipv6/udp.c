@@ -220,7 +220,6 @@ int udpv6_recvmsg(struct kiocb *iocb, struct sock *sk,
 	int peeked;
 	int err;
 	int is_udplite = IS_UDPLITE(sk);
-	bool checksum_valid = false;
 	int is_udp4;
 
 	if (flags & MSG_ERRQUEUE)
@@ -248,12 +247,11 @@ try_again:
 	 */
 
 	if (copied < ulen || UDP_SKB_CB(skb)->partial_cov) {
-		checksum_valid = !udp_lib_checksum_complete(skb);
-		if (!checksum_valid)
+		if (udp_lib_checksum_complete(skb))
 			goto csum_copy_err;
 	}
 
-	if (checksum_valid || skb_csum_unnecessary(skb))
+	if (skb_csum_unnecessary(skb))
 		err = skb_copy_datagram_iovec(skb, sizeof(struct udphdr),
 					      msg->msg_iov, copied       );
 	else {
@@ -967,18 +965,11 @@ do_udp_sendmsg:
 
 	security_sk_classify_flow(sk, &fl);
 
-	err = ip6_sk_dst_lookup(sk, &dst, &fl);
-	if (err)
+	dst = ip6_sk_dst_lookup_flow(sk, &fl, final_p, true);
+	if (IS_ERR(dst)) {
+		err = PTR_ERR(dst);
+		dst = NULL;
 		goto out;
-	if (final_p)
-		ipv6_addr_copy(&fl.fl6_dst, final_p);
-
-	err = __xfrm_lookup(sock_net(sk), &dst, &fl, sk, XFRM_LOOKUP_WAIT);
-	if (err < 0) {
-		if (err == -EREMOTE)
-			err = ip6_dst_blackhole(sk, &dst, &fl);
-		if (err < 0)
-			goto out;
 	}
 
 	if (hlimit < 0) {
